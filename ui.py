@@ -161,6 +161,7 @@ class PokerGUI:
         self.current_state: Optional[GameState] = None
         self._card_widgets: List[CardWidget] = []
         self._anim_after_id: Optional[str] = None
+        self._action_log: List[str] = []
 
         # Build primary window content
         self._build_table_window()
@@ -227,8 +228,108 @@ class PokerGUI:
 
         table = ctk.CTkFrame(root, fg_color=TABLE_GREEN, corner_radius=12)
         table.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
-        table.grid_rowconfigure(3, weight=1)
-        table.grid_columnconfigure(0, weight=1)
+        table.grid_rowconfigure(2, weight=1)
+        table.grid_columnconfigure(0, weight=3)
+        table.grid_columnconfigure(1, weight=2)
+
+        # ── Right-side info panel (column 1) ──
+        right_panel = ctk.CTkFrame(table, fg_color="transparent")
+        right_panel.grid(row=0, column=1, rowspan=7, sticky="nsew",
+                         padx=(4, 12), pady=12)
+        right_panel.grid_rowconfigure(0, weight=1)
+        right_panel.grid_rowconfigure(1, weight=1)
+        right_panel.grid_columnconfigure(0, weight=1)
+
+        # ── Top half: AI Thought Process ──
+        self.thought_frame = ctk.CTkFrame(
+            right_panel, fg_color="#1a2332", corner_radius=10,
+            border_width=1, border_color="#2d4a5e",
+        )
+        self.thought_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 4))
+
+        thought_header = ctk.CTkFrame(self.thought_frame, fg_color="transparent")
+        thought_header.pack(fill="x", padx=12, pady=(10, 4))
+        ctk.CTkLabel(
+            thought_header,
+            text="🧠 AI Thought Process",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#80cbc4",
+        ).pack(side="left")
+        self.thought_state_label = ctk.CTkLabel(
+            thought_header,
+            text="",
+            font=ctk.CTkFont(size=11),
+            text_color="#546e7a",
+        )
+        self.thought_state_label.pack(side="right")
+
+        self.thought_bars_frame = ctk.CTkFrame(
+            self.thought_frame, fg_color="transparent",
+        )
+        self.thought_bars_frame.pack(fill="x", padx=12, pady=(4, 12))
+
+        self._thought_bar_widgets: Dict[str, Dict[str, Any]] = {}
+        for action in self.env.actions:
+            display_name, colour = ACTION_DISPLAY.get(action, (action, "#78909c"))
+            bar_row = ctk.CTkFrame(self.thought_bars_frame, fg_color="transparent")
+            bar_row.pack(fill="x", pady=1)
+            bar_row.grid_columnconfigure(1, weight=1)
+
+            name_lbl = ctk.CTkLabel(
+                bar_row, text=display_name, width=80,
+                font=ctk.CTkFont(size=12, weight="bold"),
+                text_color="#cfd8dc", anchor="w",
+            )
+            name_lbl.grid(row=0, column=0, padx=(0, 6), sticky="w")
+
+            bar = ctk.CTkProgressBar(
+                bar_row, height=18, corner_radius=4,
+                progress_color=colour,
+                fg_color="#263238", border_color="#37474f",
+                border_width=1,
+            )
+            bar.grid(row=0, column=1, sticky="ew", padx=(0, 6))
+            bar.set(0)
+
+            val_lbl = ctk.CTkLabel(
+                bar_row, text="—", width=70,
+                font=ctk.CTkFont(family="Courier", size=11, weight="bold"),
+                text_color="#90a4ae", anchor="e",
+            )
+            val_lbl.grid(row=0, column=2, sticky="e")
+
+            badge_lbl = ctk.CTkLabel(
+                bar_row, text="", width=24,
+                font=ctk.CTkFont(size=12), text_color=GOLD,
+            )
+            badge_lbl.grid(row=0, column=3, padx=(2, 0))
+
+            self._thought_bar_widgets[action] = {
+                "bar": bar, "val": val_lbl, "badge": badge_lbl, "colour": colour,
+            }
+
+        # ── Bottom half: Action Log ──
+        self.log_frame = ctk.CTkFrame(
+            right_panel, fg_color="#1a2332", corner_radius=10,
+            border_width=1, border_color="#2d4a5e",
+        )
+        self.log_frame.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
+
+        ctk.CTkLabel(
+            self.log_frame, text="📋 Action Log",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#80cbc4",
+        ).pack(padx=10, pady=(10, 4), anchor="w")
+
+        self.log_label = ctk.CTkLabel(
+            self.log_frame,
+            text="No actions yet.",
+            font=ctk.CTkFont(family="Courier", size=12),
+            text_color="#546e7a",
+            justify="left",
+            anchor="nw",
+        )
+        self.log_label.pack(fill="both", expand=True, padx=12, pady=(2, 10))
 
         # Title
         ctk.CTkLabel(
@@ -281,14 +382,21 @@ class PokerGUI:
             text_color="#b0bec5",
         )
         self.street_label.pack()
-        self.msg_label = ctk.CTkLabel(
-            self.info_frame,
-            text="",
-            font=ctk.CTkFont(size=14),
-            text_color="#ffcc80",
-            wraplength=600,
+
+        # Result / message banner — its own row for full-width visibility
+        self.msg_frame = ctk.CTkFrame(
+            table, fg_color="transparent", corner_radius=10,
         )
-        self.msg_label.pack(pady=6)
+        self.msg_frame.grid(row=3, column=0, sticky="ew", padx=40, pady=(2, 2))
+        self.msg_frame.grid_columnconfigure(0, weight=1)
+        self.msg_label = ctk.CTkLabel(
+            self.msg_frame,
+            text="",
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color="#ffcc80",
+            wraplength=700,
+        )
+        self.msg_label.grid(row=0, column=0, pady=10, padx=16)
 
         # Hero cards
         self.hero_frame = ctk.CTkFrame(table, fg_color=FELT_GREEN, corner_radius=10)
@@ -310,78 +418,9 @@ class PokerGUI:
         self.hero_stack_label.pack(pady=(4, 10))
         self._show_hero_cards()
 
-        # AI thought process — visual bars
-        self.thought_frame = ctk.CTkFrame(
-            table, fg_color="#1a2332", corner_radius=10,
-            border_width=1, border_color="#2d4a5e",
-        )
-        self.thought_frame.grid(row=5, column=0, pady=(6, 6), padx=50, sticky="ew")
-        self.thought_frame.grid_columnconfigure(0, weight=1)
-
-        thought_header = ctk.CTkFrame(self.thought_frame, fg_color="transparent")
-        thought_header.pack(fill="x", padx=12, pady=(10, 4))
-        ctk.CTkLabel(
-            thought_header,
-            text="🧠 AI Thought Process",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            text_color="#80cbc4",
-        ).pack(side="left")
-        self.thought_state_label = ctk.CTkLabel(
-            thought_header,
-            text="",
-            font=ctk.CTkFont(size=11),
-            text_color="#546e7a",
-        )
-        self.thought_state_label.pack(side="right")
-
-        self.thought_bars_frame = ctk.CTkFrame(
-            self.thought_frame, fg_color="transparent",
-        )
-        self.thought_bars_frame.pack(fill="x", padx=12, pady=(4, 12))
-
-        self._thought_bar_widgets: Dict[str, Dict[str, Any]] = {}
-        for action in self.env.actions:
-            display_name, colour = ACTION_DISPLAY.get(action, (action, "#78909c"))
-            row = ctk.CTkFrame(self.thought_bars_frame, fg_color="transparent")
-            row.pack(fill="x", pady=1)
-            row.grid_columnconfigure(1, weight=1)
-
-            name_lbl = ctk.CTkLabel(
-                row, text=display_name, width=80,
-                font=ctk.CTkFont(size=12, weight="bold"),
-                text_color="#cfd8dc", anchor="w",
-            )
-            name_lbl.grid(row=0, column=0, padx=(0, 8), sticky="w")
-
-            bar = ctk.CTkProgressBar(
-                row, height=18, corner_radius=4,
-                progress_color=colour,
-                fg_color="#263238", border_color="#37474f",
-                border_width=1,
-            )
-            bar.grid(row=0, column=1, sticky="ew", padx=(0, 8))
-            bar.set(0)
-
-            val_lbl = ctk.CTkLabel(
-                row, text="—", width=85,
-                font=ctk.CTkFont(family="Courier", size=12, weight="bold"),
-                text_color="#90a4ae", anchor="e",
-            )
-            val_lbl.grid(row=0, column=2, sticky="e")
-
-            badge_lbl = ctk.CTkLabel(
-                row, text="", width=30,
-                font=ctk.CTkFont(size=12), text_color=GOLD,
-            )
-            badge_lbl.grid(row=0, column=3, padx=(4, 0))
-
-            self._thought_bar_widgets[action] = {
-                "bar": bar, "val": val_lbl, "badge": badge_lbl, "colour": colour,
-            }
-
         # Action buttons
         self.btn_frame = ctk.CTkFrame(table, fg_color="transparent")
-        self.btn_frame.grid(row=6, column=0, pady=10)
+        self.btn_frame.grid(row=5, column=0, pady=10)
 
         self.fold_btn = ctk.CTkButton(
             self.btn_frame, text="Fold", width=110, height=42,
@@ -415,7 +454,7 @@ class PokerGUI:
 
         # Control bar
         ctrl = ctk.CTkFrame(table, fg_color="transparent")
-        ctrl.grid(row=7, column=0, pady=(6, 14))
+        ctrl.grid(row=6, column=0, pady=(6, 14))
 
         self.new_game_btn = ctk.CTkButton(
             ctrl, text="▶  New Game (Manual)", width=190, height=38,
@@ -660,6 +699,33 @@ class PokerGUI:
             w["badge"].configure(text="★" if action == best_a else "")
 
     # ================================================================
+    # Result banner helpers
+    # ================================================================
+
+    def _show_result(self, text: str, text_color: str, bg_color: str) -> None:
+        """Display a prominent result banner."""
+        self.msg_frame.configure(fg_color=bg_color)
+        self.msg_label.configure(text=text, text_color=text_color)
+
+    def _clear_result(self) -> None:
+        """Reset the banner and action log."""
+        self.msg_frame.configure(fg_color="transparent")
+        self.msg_label.configure(text="", text_color="#ffcc80")
+        self._action_log = []
+        self.log_label.configure(text="No actions yet.", text_color="#546e7a")
+
+    def _log_action(self, who: str, action: str, street: str) -> None:
+        """Append an action to the visible log."""
+        pretty = {"fold": "Fold", "call": "Call",
+                  "raise_100": "Raise $100", "raise_150": "All-In $150"}
+        tag = pretty.get(action, action)
+        self._action_log.append(f"{street.upper():>8}  │  {who:<10} → {tag}")
+        self.log_label.configure(
+            text="\n".join(self._action_log),
+            text_color="#b0bec5",
+        )
+
+    # ================================================================
     # Action button management
     # ================================================================
 
@@ -694,6 +760,7 @@ class PokerGUI:
         self._show_hero_cards()
         self._show_opp_cards(face_up=False)
         self._update_display()
+        self._clear_result()
         self.msg_label.configure(
             text="Your turn — choose an action.", text_color="#ffcc80",
         )
@@ -703,7 +770,15 @@ class PokerGUI:
         if not self.game_active:
             return
         self._disable_actions()
+        street_before = self.current_state.street if self.current_state else "?"
+        self._log_action("You", action, street_before)
         result: StepResult = self.env.step(action)
+
+        # Log opponent's response (if any)
+        opp_act = result.info.get("opp_action")
+        if opp_act:
+            self._log_action("Opponent", opp_act, street_before)
+
         self.current_state = result.next_state
         self._update_display(animate_card=True)
 
@@ -714,21 +789,21 @@ class PokerGUI:
             opp_h = result.info.get("opponent_hand", "")
             self._show_opp_cards(face_up=True)
             if winner == "hero":
-                self.msg_label.configure(
-                    text=(f"🎉 You WON!  Reward: ${result.reward:+.0f}"
-                          f"  |  You: {hero_h}  Opp: {opp_h}"),
-                    text_color=WR_LINE_COLOUR,
+                self._show_result(
+                    f"🎉 You WON!  Reward: ${result.reward:+.0f}"
+                    f"  |  You: {hero_h}  Opp: {opp_h}",
+                    text_color="#ffffff", bg_color="#1b5e20",
                 )
             elif winner == "opponent":
-                self.msg_label.configure(
-                    text=(f"😞 You lost.  Reward: ${result.reward:+.0f}"
-                          f"  |  You: {hero_h}  Opp: {opp_h}"),
-                    text_color="#ef5350",
+                self._show_result(
+                    f"😞 You lost.  Reward: ${result.reward:+.0f}"
+                    f"  |  You: {hero_h}  Opp: {opp_h}",
+                    text_color="#ffffff", bg_color="#b71c1c",
                 )
             else:
-                self.msg_label.configure(
-                    text=f"🤝 Tie!  Reward: ${result.reward:+.0f}  (odd chip → hero)",
-                    text_color="#fff176",
+                self._show_result(
+                    f"🤝 Tie!  Reward: ${result.reward:+.0f}  (odd chip → hero)",
+                    text_color="#000000", bg_color="#fff176",
                 )
         else:
             self._enable_actions(self.env.get_valid_actions())
@@ -746,6 +821,7 @@ class PokerGUI:
         self._show_opp_cards(face_up=False)
         self._update_display()
         self._disable_actions()
+        self._clear_result()
         self.msg_label.configure(text="🤖 AI is thinking…", text_color="#80cbc4")
         self.root.after(800, self._ai_step)
 
@@ -756,10 +832,18 @@ class PokerGUI:
         if not valid:
             return
         action = self.agent.get_action(self.current_state, valid, training=False)
+        street_before = self.current_state.street if self.current_state else "?"
+        self._log_action("AI", action, street_before)
         self.msg_label.configure(
             text=f"🤖 AI chose: {action.upper()}", text_color="#80cbc4",
         )
         result = self.env.step(action)
+
+        # Log opponent's response (if any)
+        opp_act = result.info.get("opp_action")
+        if opp_act:
+            self._log_action("Opponent", opp_act, street_before)
+
         self.current_state = result.next_state
         self._update_display(animate_card=True)
 
@@ -770,17 +854,22 @@ class PokerGUI:
             opp_h = result.info.get("opponent_hand", "")
             self._show_opp_cards(face_up=True)
             if winner == "hero":
-                txt = (f"🤖 AI WON!  Reward: ${result.reward:+.0f}"
-                       f"  |  AI: {hero_h}  Opp: {opp_h}")
-                col = WR_LINE_COLOUR
+                self._show_result(
+                    f"🤖 AI WON!  Reward: ${result.reward:+.0f}"
+                    f"  |  AI: {hero_h}  Opp: {opp_h}",
+                    text_color="#ffffff", bg_color="#1b5e20",
+                )
             elif winner == "opponent":
-                txt = (f"🤖 AI lost.  Reward: ${result.reward:+.0f}"
-                       f"  |  AI: {hero_h}  Opp: {opp_h}")
-                col = "#ef5350"
+                self._show_result(
+                    f"🤖 AI lost.  Reward: ${result.reward:+.0f}"
+                    f"  |  AI: {hero_h}  Opp: {opp_h}",
+                    text_color="#ffffff", bg_color="#b71c1c",
+                )
             else:
-                txt = f"🤖 Tie!  Reward: ${result.reward:+.0f}  (odd chip → hero)"
-                col = "#fff176"
-            self.msg_label.configure(text=txt, text_color=col)
+                self._show_result(
+                    f"🤖 Tie!  Reward: ${result.reward:+.0f}  (odd chip → hero)",
+                    text_color="#000000", bg_color="#fff176",
+                )
         else:
             self.root.after(1200, self._ai_step)
 

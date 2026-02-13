@@ -144,8 +144,8 @@ WINDOW_MIN_SIZE: Final[tuple] = (1200, 800)
 
 # -- Multi-window layout --
 TABLE_WINDOW_TITLE: Final[str] = "♠ ♥  Poker Table  ♦ ♣"
-TABLE_WINDOW_GEOMETRY: Final[str] = "820x920"
-TABLE_WINDOW_MIN_SIZE: Final[tuple] = (700, 750)
+TABLE_WINDOW_GEOMETRY: Final[str] = "1060x920"
+TABLE_WINDOW_MIN_SIZE: Final[tuple] = (900, 800)
 
 ANALYSIS_WINDOW_TITLE: Final[str] = "📊  Train and Analyse"
 ANALYSIS_WINDOW_GEOMETRY: Final[str] = "680x920"

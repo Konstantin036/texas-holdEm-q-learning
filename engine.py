@@ -529,7 +529,8 @@ class PokerEnv:
             self.winner = "opponent"
             reward = float(-(initial_stack - self.hero_stack) - self.hero_invested)
             return StepResult(
-                self._get_state(), reward, True, {"winner": "opponent"}
+                self._get_state(), reward, True,
+                {"winner": "opponent", "hero_action": "fold"},
             )
 
         if action == "call":
@@ -566,7 +567,8 @@ class PokerEnv:
             self.winner = "hero"
             reward = float(self.pot - (initial_stack - self.hero_stack))
             return StepResult(
-                self._get_state(), reward, True, {"winner": "hero"}
+                self._get_state(), reward, True,
+                {"winner": "hero", "opp_action": "fold"},
             )
 
         if opp_action == "call":
@@ -597,9 +599,9 @@ class PokerEnv:
             self.river = self.deck.pop()
             self.street = "river"
         elif self.street == "river":
-            return self._showdown(initial_stack)
+            return self._showdown(initial_stack, opp_action)
 
-        return StepResult(self._get_state(), 0.0, False, {})
+        return StepResult(self._get_state(), 0.0, False, {"opp_action": opp_action})
 
     def get_remaining_deck(self) -> List[Card]:
         """Cards remaining in the deck (for outs calculation)."""
@@ -642,7 +644,7 @@ class PokerEnv:
             opponent_invested=self.opponent_invested,
         )
 
-    def _showdown(self, initial_stack: int) -> StepResult:
+    def _showdown(self, initial_stack: int, opp_action: str = "call") -> StepResult:
         """Resolve the hand at showdown with proper pot splitting."""
         self.street = "showdown"
         self.done = True
@@ -674,5 +676,6 @@ class PokerEnv:
             "opponent_hand": opp_hr.name,
             "hero_rank": hero_hr.rank,
             "opponent_rank": opp_hr.rank,
+            "opp_action": opp_action,
         }
         return StepResult(self._get_state(), reward, True, info)
