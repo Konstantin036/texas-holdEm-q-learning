@@ -1,13 +1,16 @@
 """
 Texas Hold'em Q-Learning — CustomTkinter GUI  (View)
 ====================================================
-A sleek, modern interface built with **CustomTkinter** featuring:
+**Multi-window architecture**:
 
-* Animated card dealing (Turn & River) with smooth fade-in.
-* Real-time **Q-Table Heatmap** showing which actions are favoured.
-* **Live Win-Rate graph** that updates during training.
-* **Human vs AI** interactive mode displaying the AI's "thought process"
-  (current Q-values for the state).
+* **Poker Table** (primary window) — full-size felt with animated card
+  dealing, AI thought-process bars, action buttons, and game controls.
+* **Train and Analyse** (secondary window) — training hyperparameters,
+  progress bar, and four analytics tabs (Win Rate, Reward, Q-Table
+  Heatmap, Q-Table grid).
+
+Both windows share the same ``PokerGUI`` controller so they stay
+perfectly synchronised.
 
 Requires
 --------
@@ -38,6 +41,9 @@ from config import (
     ACCENT_GREEN,
     ACCENT_RED,
     ACTION_DISPLAY,
+    ANALYSIS_WINDOW_GEOMETRY,
+    ANALYSIS_WINDOW_MIN_SIZE,
+    ANALYSIS_WINDOW_TITLE,
     AX_FACECOLOR,
     BASELINE_COLOUR,
     CARD_BG,
@@ -59,11 +65,11 @@ from config import (
     RW_RAW_COLOUR,
     SUIT_COLOURS,
     TABLE_GREEN,
+    TABLE_WINDOW_GEOMETRY,
+    TABLE_WINDOW_MIN_SIZE,
+    TABLE_WINDOW_TITLE,
     TICK_COLOUR,
     TITLE_COLOUR,
-    WINDOW_GEOMETRY,
-    WINDOW_MIN_SIZE,
-    WINDOW_TITLE,
     WR_FILL_ALPHA,
     WR_LINE_COLOUR,
 )
@@ -130,17 +136,18 @@ class CardWidget(ctk.CTkFrame):
 
 
 # ============================================================================
-# Poker GUI
+# Poker GUI  —  Multi-window controller
 # ============================================================================
 
 class PokerGUI:
-    """Main application window."""
+    """Two-window application: Poker Table + Analysis & Training."""
 
     def __init__(self) -> None:
+        # ── Primary window: Poker Table ──
         self.root = ctk.CTk()
-        self.root.title(WINDOW_TITLE)
-        self.root.geometry(WINDOW_GEOMETRY)
-        self.root.minsize(*WINDOW_MIN_SIZE)
+        self.root.title(TABLE_WINDOW_TITLE)
+        self.root.geometry(TABLE_WINDOW_GEOMETRY)
+        self.root.minsize(*TABLE_WINDOW_MIN_SIZE)
 
         # Model / Controller
         self.env = PokerEnv()
@@ -155,44 +162,89 @@ class PokerGUI:
         self._card_widgets: List[CardWidget] = []
         self._anim_after_id: Optional[str] = None
 
-        self._build_ui()
+        # Build primary window content
+        self._build_table_window()
+
+        # ── Secondary window: Analysis & Training ──
+        self.analysis_win = ctk.CTkToplevel(self.root)
+        self.analysis_win.title(ANALYSIS_WINDOW_TITLE)
+        self.analysis_win.geometry(ANALYSIS_WINDOW_GEOMETRY)
+        self.analysis_win.minsize(*ANALYSIS_WINDOW_MIN_SIZE)
+
+        # Position the analysis window to the right of the table window
+        self.analysis_win.after(50, self._position_analysis_window)
+
+        # Prevent the analysis window's close button from killing the app;
+        # instead just hide it, and re-show via a toggle button.
+        self.analysis_win.protocol("WM_DELETE_WINDOW", self._toggle_analysis)
+
+        self._build_analysis_window()
 
     # ================================================================
-    # UI construction
+    # Window positioning helper
     # ================================================================
 
-    def _build_ui(self) -> None:
-        # Top-level two-column layout
-        self.root.grid_columnconfigure(0, weight=3)
-        self.root.grid_columnconfigure(1, weight=2)
-        self.root.grid_rowconfigure(0, weight=1)
+    def _position_analysis_window(self) -> None:
+        """Place the analysis window immediately to the right of the table."""
+        try:
+            x = self.root.winfo_x() + self.root.winfo_width() + 8
+            y = self.root.winfo_y()
+            self.analysis_win.geometry(f"+{x}+{y}")
+        except Exception:
+            pass  # harmless if the WM doesn't cooperate
 
-        self._build_left_panel()
-        self._build_right_panel()
+    # ================================================================
+    # Toggle analysis window visibility
+    # ================================================================
 
-    # ---- Left panel (table) ------------------------------------------------
+    def _switch_to_analysis(self) -> None:
+        """Bring the Analysis window to the front."""
+        self.analysis_win.deiconify()
+        self.analysis_win.lift()
+        self.analysis_win.focus_force()
 
-    def _build_left_panel(self) -> None:
-        left = ctk.CTkFrame(self.root, fg_color=TABLE_GREEN, corner_radius=12)
-        left.grid(row=0, column=0, sticky="nsew", padx=(10, 5), pady=10)
-        left.grid_rowconfigure(3, weight=1)
-        left.grid_columnconfigure(0, weight=1)
+    def _switch_to_table(self) -> None:
+        """Bring the Poker Table window to the front."""
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def _toggle_analysis(self) -> None:
+        """Hide or show the Analysis & Training window."""
+        if self.analysis_win.winfo_viewable():
+            self.analysis_win.withdraw()
+        else:
+            self._switch_to_analysis()
+
+    # ================================================================
+    # Primary window — Poker Table  (full-size)
+    # ================================================================
+
+    def _build_table_window(self) -> None:
+        root = self.root
+        root.grid_columnconfigure(0, weight=1)
+        root.grid_rowconfigure(0, weight=1)
+
+        table = ctk.CTkFrame(root, fg_color=TABLE_GREEN, corner_radius=12)
+        table.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        table.grid_rowconfigure(3, weight=1)
+        table.grid_columnconfigure(0, weight=1)
 
         # Title
         ctk.CTkLabel(
-            left,
+            table,
             text="♠ ♥  Texas Hold'em  ♦ ♣",
-            font=ctk.CTkFont(size=24, weight="bold"),
+            font=ctk.CTkFont(size=28, weight="bold"),
             text_color=GOLD,
-        ).grid(row=0, column=0, pady=(15, 5))
+        ).grid(row=0, column=0, pady=(18, 8))
 
-        # Opponent area (face-down)
-        self.opp_frame = ctk.CTkFrame(left, fg_color="transparent")
+        # Opponent area
+        self.opp_frame = ctk.CTkFrame(table, fg_color="transparent")
         self.opp_frame.grid(row=1, column=0, pady=5)
         self.opp_label = ctk.CTkLabel(
             self.opp_frame,
             text="Opponent",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(size=15, weight="bold"),
             text_color="#e0e0e0",
         )
         self.opp_label.pack(pady=(0, 4))
@@ -201,90 +253,92 @@ class PokerGUI:
         self._show_opp_cards(face_up=False)
 
         # Community cards
-        self.community_frame = ctk.CTkFrame(left, fg_color="#1b5e20", corner_radius=10)
-        self.community_frame.grid(row=2, column=0, pady=10, padx=40, sticky="ew")
+        self.community_frame = ctk.CTkFrame(table, fg_color="#1b5e20", corner_radius=10)
+        self.community_frame.grid(row=2, column=0, pady=12, padx=50, sticky="ew")
         ctk.CTkLabel(
             self.community_frame,
             text="Community Cards",
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=14),
             text_color="#a5d6a7",
-        ).pack(pady=(8, 2))
+        ).pack(pady=(10, 4))
         self.board_frame = ctk.CTkFrame(self.community_frame, fg_color="transparent")
-        self.board_frame.pack(pady=(0, 10))
+        self.board_frame.pack(pady=(0, 12))
 
         # Pot & stacks
-        self.info_frame = ctk.CTkFrame(left, fg_color="transparent")
-        self.info_frame.grid(row=3, column=0, pady=5)
+        self.info_frame = ctk.CTkFrame(table, fg_color="transparent")
+        self.info_frame.grid(row=3, column=0, pady=8)
         self.pot_label = ctk.CTkLabel(
             self.info_frame,
             text="Pot: $100",
-            font=ctk.CTkFont(size=18, weight="bold"),
+            font=ctk.CTkFont(size=22, weight="bold"),
             text_color=GOLD,
         )
         self.pot_label.pack()
         self.street_label = ctk.CTkLabel(
             self.info_frame,
             text="",
-            font=ctk.CTkFont(size=14),
+            font=ctk.CTkFont(size=15),
             text_color="#b0bec5",
         )
         self.street_label.pack()
         self.msg_label = ctk.CTkLabel(
             self.info_frame,
             text="",
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=14),
             text_color="#ffcc80",
-            wraplength=500,
+            wraplength=600,
         )
-        self.msg_label.pack(pady=4)
+        self.msg_label.pack(pady=6)
 
         # Hero cards
-        self.hero_frame = ctk.CTkFrame(left, fg_color=FELT_GREEN, corner_radius=10)
-        self.hero_frame.grid(row=4, column=0, pady=5, padx=40, sticky="ew")
+        self.hero_frame = ctk.CTkFrame(table, fg_color=FELT_GREEN, corner_radius=10)
+        self.hero_frame.grid(row=4, column=0, pady=8, padx=50, sticky="ew")
         ctk.CTkLabel(
             self.hero_frame,
             text="Hero (You)",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(size=15, weight="bold"),
             text_color="#ffffff",
-        ).pack(pady=(8, 2))
+        ).pack(pady=(10, 4))
         self.hero_cards_frame = ctk.CTkFrame(self.hero_frame, fg_color="transparent")
         self.hero_cards_frame.pack()
         self.hero_stack_label = ctk.CTkLabel(
             self.hero_frame,
             text="Stack: $150",
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=14),
             text_color="#c8e6c9",
         )
-        self.hero_stack_label.pack(pady=(2, 8))
+        self.hero_stack_label.pack(pady=(4, 10))
         self._show_hero_cards()
 
-        # AI thought process (Q-values for current state) — visual bars
-        self.thought_frame = ctk.CTkFrame(left, fg_color="#1a2332", corner_radius=10,
-                                          border_width=1, border_color="#2d4a5e")
-        self.thought_frame.grid(row=5, column=0, pady=(4, 4), padx=40, sticky="ew")
+        # AI thought process — visual bars
+        self.thought_frame = ctk.CTkFrame(
+            table, fg_color="#1a2332", corner_radius=10,
+            border_width=1, border_color="#2d4a5e",
+        )
+        self.thought_frame.grid(row=5, column=0, pady=(6, 6), padx=50, sticky="ew")
         self.thought_frame.grid_columnconfigure(0, weight=1)
 
         thought_header = ctk.CTkFrame(self.thought_frame, fg_color="transparent")
-        thought_header.pack(fill="x", padx=10, pady=(8, 2))
+        thought_header.pack(fill="x", padx=12, pady=(10, 4))
         ctk.CTkLabel(
             thought_header,
             text="🧠 AI Thought Process",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=ctk.CTkFont(size=14, weight="bold"),
             text_color="#80cbc4",
         ).pack(side="left")
         self.thought_state_label = ctk.CTkLabel(
             thought_header,
             text="",
-            font=ctk.CTkFont(size=10),
+            font=ctk.CTkFont(size=11),
             text_color="#546e7a",
         )
         self.thought_state_label.pack(side="right")
 
-        # Container for the per-action bar rows
-        self.thought_bars_frame = ctk.CTkFrame(self.thought_frame, fg_color="transparent")
-        self.thought_bars_frame.pack(fill="x", padx=10, pady=(4, 10))
+        self.thought_bars_frame = ctk.CTkFrame(
+            self.thought_frame, fg_color="transparent",
+        )
+        self.thought_bars_frame.pack(fill="x", padx=12, pady=(4, 12))
 
-        # Pre-build bar widgets for each action
         self._thought_bar_widgets: Dict[str, Dict[str, Any]] = {}
         for action in self.env.actions:
             display_name, colour = ACTION_DISPLAY.get(action, (action, "#78909c"))
@@ -293,29 +347,31 @@ class PokerGUI:
             row.grid_columnconfigure(1, weight=1)
 
             name_lbl = ctk.CTkLabel(
-                row, text=display_name, width=75,
-                font=ctk.CTkFont(size=11, weight="bold"),
+                row, text=display_name, width=80,
+                font=ctk.CTkFont(size=12, weight="bold"),
                 text_color="#cfd8dc", anchor="w",
             )
-            name_lbl.grid(row=0, column=0, padx=(0, 6), sticky="w")
+            name_lbl.grid(row=0, column=0, padx=(0, 8), sticky="w")
 
-            bar = ctk.CTkProgressBar(row, height=16, corner_radius=4,
-                                     progress_color=colour,
-                                     fg_color="#263238", border_color="#37474f",
-                                     border_width=1)
-            bar.grid(row=0, column=1, sticky="ew", padx=(0, 6))
+            bar = ctk.CTkProgressBar(
+                row, height=18, corner_radius=4,
+                progress_color=colour,
+                fg_color="#263238", border_color="#37474f",
+                border_width=1,
+            )
+            bar.grid(row=0, column=1, sticky="ew", padx=(0, 8))
             bar.set(0)
 
             val_lbl = ctk.CTkLabel(
-                row, text="—", width=80,
-                font=ctk.CTkFont(family="Courier", size=11, weight="bold"),
+                row, text="—", width=85,
+                font=ctk.CTkFont(family="Courier", size=12, weight="bold"),
                 text_color="#90a4ae", anchor="e",
             )
             val_lbl.grid(row=0, column=2, sticky="e")
 
             badge_lbl = ctk.CTkLabel(
                 row, text="", width=30,
-                font=ctk.CTkFont(size=11), text_color=GOLD,
+                font=ctk.CTkFont(size=12), text_color=GOLD,
             )
             badge_lbl.grid(row=0, column=3, padx=(4, 0))
 
@@ -324,151 +380,179 @@ class PokerGUI:
             }
 
         # Action buttons
-        self.btn_frame = ctk.CTkFrame(left, fg_color="transparent")
-        self.btn_frame.grid(row=6, column=0, pady=8)
+        self.btn_frame = ctk.CTkFrame(table, fg_color="transparent")
+        self.btn_frame.grid(row=6, column=0, pady=10)
 
         self.fold_btn = ctk.CTkButton(
-            self.btn_frame, text="Fold", width=100, height=40,
+            self.btn_frame, text="Fold", width=110, height=42,
             fg_color=ACCENT_RED, hover_color="#c62828",
             command=lambda: self._player_action("fold"),
         )
-        self.fold_btn.grid(row=0, column=0, padx=4)
+        self.fold_btn.grid(row=0, column=0, padx=5)
 
         self.call_btn = ctk.CTkButton(
-            self.btn_frame, text="Call", width=100, height=40,
+            self.btn_frame, text="Call", width=110, height=42,
             fg_color=ACCENT_GREEN, hover_color="#2e7d32",
             command=lambda: self._player_action("call"),
         )
-        self.call_btn.grid(row=0, column=1, padx=4)
+        self.call_btn.grid(row=0, column=1, padx=5)
 
         self.raise100_btn = ctk.CTkButton(
-            self.btn_frame, text="Raise $100", width=120, height=40,
+            self.btn_frame, text="Raise $100", width=130, height=42,
             fg_color="#ff8f00", hover_color="#e65100",
             command=lambda: self._player_action("raise_100"),
         )
-        self.raise100_btn.grid(row=0, column=2, padx=4)
+        self.raise100_btn.grid(row=0, column=2, padx=5)
 
         self.raise150_btn = ctk.CTkButton(
-            self.btn_frame, text="All-In $150", width=120, height=40,
+            self.btn_frame, text="All-In $150", width=130, height=42,
             fg_color="#d50000", hover_color="#b71c1c",
             command=lambda: self._player_action("raise_150"),
         )
-        self.raise150_btn.grid(row=0, column=3, padx=4)
+        self.raise150_btn.grid(row=0, column=3, padx=5)
 
         self._disable_actions()
 
         # Control bar
-        ctrl = ctk.CTkFrame(left, fg_color="transparent")
-        ctrl.grid(row=7, column=0, pady=(4, 12))
+        ctrl = ctk.CTkFrame(table, fg_color="transparent")
+        ctrl.grid(row=7, column=0, pady=(6, 14))
 
         self.new_game_btn = ctk.CTkButton(
-            ctrl, text="▶  New Game (Manual)", width=180, height=36,
+            ctrl, text="▶  New Game (Manual)", width=190, height=38,
             fg_color=ACCENT_BLUE, hover_color="#1565c0",
             command=self._start_manual,
         )
         self.new_game_btn.grid(row=0, column=0, padx=6)
 
         self.ai_play_btn = ctk.CTkButton(
-            ctrl, text="🤖  Watch AI Play", width=180, height=36,
+            ctrl, text="🤖  Watch AI Play", width=190, height=38,
             fg_color="#6a1b9a", hover_color="#4a148c",
             command=self._watch_ai,
         )
         self.ai_play_btn.grid(row=0, column=1, padx=6)
 
-    # ---- Right panel (training & analytics) --------------------------------
+        self.toggle_btn = ctk.CTkButton(
+            ctrl, text="📊  Train & Analyse", width=190, height=38,
+            fg_color="#37474f", hover_color="#455a64",
+            command=self._switch_to_analysis,
+        )
+        self.toggle_btn.grid(row=0, column=2, padx=6)
 
-    def _build_right_panel(self) -> None:
-        right = ctk.CTkFrame(self.root, corner_radius=12)
-        right.grid(row=0, column=1, sticky="nsew", padx=(5, 10), pady=10)
-        right.grid_rowconfigure(4, weight=1)
-        right.grid_columnconfigure(0, weight=1)
+    # ================================================================
+    # Secondary window — Analysis & Training
+    # ================================================================
 
-        # --- Training controls ---
-        train_ctl = ctk.CTkFrame(right, fg_color="transparent")
-        train_ctl.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 4))
-        train_ctl.grid_columnconfigure(1, weight=1)
+    def _build_analysis_window(self) -> None:
+        win = self.analysis_win
+        win.grid_rowconfigure(2, weight=1)
+        win.grid_columnconfigure(0, weight=1)
+
+        # --- Switch-to-table button bar ---
+        nav_bar = ctk.CTkFrame(win, fg_color="transparent")
+        nav_bar.grid(row=0, column=0, sticky="ew", padx=16, pady=(10, 0))
+        nav_bar.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkButton(
+            nav_bar, text="♠ ♥  Back to Poker Table  ♦ ♣", height=34,
+            fg_color=TABLE_GREEN, hover_color=FELT_GREEN,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=GOLD,
+            command=self._switch_to_table,
+        ).grid(row=0, column=0, sticky="ew")
+
+        # --- Training controls (centred) ---
+        train_outer = ctk.CTkFrame(win, fg_color="transparent")
+        train_outer.grid(row=1, column=0, sticky="ew", padx=16, pady=(10, 6))
+        train_outer.grid_columnconfigure(0, weight=1)
+
+        train_ctl = ctk.CTkFrame(train_outer, fg_color="transparent")
+        train_ctl.grid(row=0, column=0)  # centred by outer weight
 
         ctk.CTkLabel(
             train_ctl, text="Q-Learning Training",
-            font=ctk.CTkFont(size=16, weight="bold"),
-        ).grid(row=0, column=0, columnspan=4, pady=(0, 8))
+            font=ctk.CTkFont(size=18, weight="bold"),
+        ).grid(row=0, column=0, columnspan=4, pady=(0, 10))
 
         ctk.CTkLabel(train_ctl, text="Episodes:").grid(row=1, column=0, padx=4)
         self.ep_var = ctk.StringVar(value="5000")
         ctk.CTkEntry(train_ctl, textvariable=self.ep_var, width=80).grid(
-            row=1, column=1, padx=4, sticky="w"
+            row=1, column=1, padx=4, sticky="w",
         )
 
         ctk.CTkLabel(train_ctl, text="α:").grid(row=1, column=2, padx=(12, 2))
         self.lr_var = ctk.StringVar(value="0.10")
         ctk.CTkEntry(train_ctl, textvariable=self.lr_var, width=60).grid(
-            row=1, column=3, padx=2
+            row=1, column=3, padx=2,
         )
 
         ctk.CTkLabel(train_ctl, text="γ:").grid(row=2, column=0, padx=4, pady=4)
         self.gamma_var = ctk.StringVar(value="0.95")
         ctk.CTkEntry(train_ctl, textvariable=self.gamma_var, width=60).grid(
-            row=2, column=1, padx=4, sticky="w"
+            row=2, column=1, padx=4, sticky="w",
         )
 
         ctk.CTkLabel(train_ctl, text="ε:").grid(row=2, column=2, padx=(12, 2))
         self.eps_var = ctk.StringVar(value="0.20")
         ctk.CTkEntry(train_ctl, textvariable=self.eps_var, width=60).grid(
-            row=2, column=3, padx=2
+            row=2, column=3, padx=2,
         )
 
         self.train_btn = ctk.CTkButton(
-            train_ctl, text="🚀 Start Training", width=200, height=36,
+            train_ctl, text="🚀 Start Training", width=220, height=38,
             fg_color=ACCENT_GREEN, hover_color="#2e7d32",
             command=self._start_training,
         )
         self.train_btn.grid(row=3, column=0, columnspan=4, pady=10)
 
-        self.progress = ctk.CTkProgressBar(train_ctl, width=300)
-        self.progress.grid(row=4, column=0, columnspan=4, pady=(0, 4))
+        self.progress = ctk.CTkProgressBar(train_outer)
+        self.progress.grid(row=1, column=0, sticky="ew", pady=(0, 4))
         self.progress.set(0)
 
         self.stats_label = ctk.CTkLabel(
-            train_ctl,
+            train_outer,
             text="Not trained yet.",
             font=ctk.CTkFont(size=12),
             text_color=LABEL_COLOUR,
         )
-        self.stats_label.grid(row=5, column=0, columnspan=4)
+        self.stats_label.grid(row=2, column=0, pady=(0, 2))
 
-        # --- Tab view for analytics ---
-        self.tabview = ctk.CTkTabview(right, corner_radius=8)
-        self.tabview.grid(row=4, column=0, sticky="nsew", padx=10, pady=(4, 10))
+        # --- Tab view for analytics (expands to fill all remaining space) ---
+        self.tabview = ctk.CTkTabview(win, corner_radius=8)
+        self.tabview.grid(row=2, column=0, sticky="nsew", padx=14, pady=(6, 14))
+
+        for tab_name in ("Win Rate", "Reward", "Q-Table Heatmap", "Q-Table"):
+            self.tabview.add(tab_name)
+
+        # Helper: wrap each canvas in a centering frame so the graph is
+        # always dead-centre regardless of window / tab size.
+        def _centered_canvas(parent: Any, fig: Figure) -> FigureCanvasTkAgg:
+            wrapper = ctk.CTkFrame(parent, fg_color="transparent")
+            wrapper.pack(fill="both", expand=True, padx=6, pady=6)
+            canvas = FigureCanvasTkAgg(fig, wrapper)
+            canvas.get_tk_widget().pack(fill="both", expand=True, anchor="center")
+            return canvas
 
         # Win-rate tab
-        tab_wr = self.tabview.add("Win Rate")
-        self.wr_fig = Figure(figsize=(5, 2.5), dpi=100, facecolor=FIG_FACECOLOR)
+        self.wr_fig = Figure(figsize=(5, 2.8), dpi=100, facecolor=FIG_FACECOLOR)
         self.wr_ax = self.wr_fig.add_subplot(111)
         self._style_ax(self.wr_ax, "Episode", "Win Rate", "Win Rate (rolling)")
-        self.wr_canvas = FigureCanvasTkAgg(self.wr_fig, tab_wr)
-        self.wr_canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.wr_canvas = _centered_canvas(self.tabview.tab("Win Rate"), self.wr_fig)
 
         # Reward tab
-        tab_rw = self.tabview.add("Reward")
-        self.rw_fig = Figure(figsize=(5, 2.5), dpi=100, facecolor=FIG_FACECOLOR)
+        self.rw_fig = Figure(figsize=(5, 2.8), dpi=100, facecolor=FIG_FACECOLOR)
         self.rw_ax = self.rw_fig.add_subplot(111)
         self._style_ax(self.rw_ax, "Episode", "Reward ($)", "Reward History")
-        self.rw_canvas = FigureCanvasTkAgg(self.rw_fig, tab_rw)
-        self.rw_canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.rw_canvas = _centered_canvas(self.tabview.tab("Reward"), self.rw_fig)
 
         # Q-table heatmap tab
-        tab_hm = self.tabview.add("Q-Table Heatmap")
-        self.hm_fig = Figure(figsize=(5, 3), dpi=100, facecolor=FIG_FACECOLOR)
+        self.hm_fig = Figure(figsize=(5, 3.2), dpi=100, facecolor=FIG_FACECOLOR)
         self.hm_ax = self.hm_fig.add_subplot(111)
-        self.hm_canvas = FigureCanvasTkAgg(self.hm_fig, tab_hm)
-        self.hm_canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.hm_canvas = _centered_canvas(self.tabview.tab("Q-Table Heatmap"), self.hm_fig)
 
         # Q-Table grid tab
-        tab_qv = self.tabview.add("Q-Table")
-        self.qv_fig = Figure(figsize=(5, 3), dpi=100, facecolor=FIG_FACECOLOR)
+        self.qv_fig = Figure(figsize=(5, 3.2), dpi=100, facecolor=FIG_FACECOLOR)
         self.qv_ax = self.qv_fig.add_subplot(111)
-        self.qv_canvas = FigureCanvasTkAgg(self.qv_fig, tab_qv)
-        self.qv_canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.qv_canvas = _centered_canvas(self.tabview.tab("Q-Table"), self.qv_fig)
 
     # ================================================================
     # Card display helpers
@@ -482,7 +566,7 @@ class PokerGUI:
         self._clear_frame(self.hero_cards_frame)
         for c in self.env.hero_cards:
             CardWidget(self.hero_cards_frame, c, face_up=True).pack(
-                side="left", padx=4, pady=4
+                side="left", padx=4, pady=4,
             )
 
     def _show_opp_cards(self, face_up: bool = False) -> None:
@@ -490,12 +574,12 @@ class PokerGUI:
         if face_up and self.env.opponent_cards:
             for c in self.env.opponent_cards:
                 CardWidget(self.opp_cards_frame, c, face_up=True).pack(
-                    side="left", padx=4, pady=4
+                    side="left", padx=4, pady=4,
                 )
         else:
             for _ in range(2):
                 CardWidget(self.opp_cards_frame, None, face_up=False).pack(
-                    side="left", padx=4, pady=4
+                    side="left", padx=4, pady=4,
                 )
 
     def _show_board(self, cards: List[Card], animate_last: bool = False) -> None:
@@ -526,10 +610,10 @@ class PokerGUI:
             return
         self.pot_label.configure(text=f"Pot: ${self.current_state.pot}")
         self.hero_stack_label.configure(
-            text=f"Stack: ${self.current_state.hero_stack}"
+            text=f"Stack: ${self.current_state.hero_stack}",
         )
         self.street_label.configure(
-            text=f"Street: {self.current_state.street.upper()}"
+            text=f"Street: {self.current_state.street.upper()}",
         )
         self._show_board(list(self.current_state.community), animate_last=animate_card)
         self._update_thought_process()
@@ -541,7 +625,7 @@ class PokerGUI:
 
         qvals = self.agent.get_q_values(self.current_state)
         self.thought_state_label.configure(
-            text=f"State: {self.current_state.state_key}"
+            text=f"State: {self.current_state.state_key}",
         )
 
         if not qvals:
@@ -581,20 +665,21 @@ class PokerGUI:
 
     def _enable_actions(self, valid: List[str]) -> None:
         self.fold_btn.configure(
-            state="normal" if "fold" in valid else "disabled"
+            state="normal" if "fold" in valid else "disabled",
         )
         self.call_btn.configure(
-            state="normal" if "call" in valid else "disabled"
+            state="normal" if "call" in valid else "disabled",
         )
         self.raise100_btn.configure(
-            state="normal" if "raise_100" in valid else "disabled"
+            state="normal" if "raise_100" in valid else "disabled",
         )
         self.raise150_btn.configure(
-            state="normal" if "raise_150" in valid else "disabled"
+            state="normal" if "raise_150" in valid else "disabled",
         )
 
     def _disable_actions(self) -> None:
-        for btn in (self.fold_btn, self.call_btn, self.raise100_btn, self.raise150_btn):
+        for btn in (self.fold_btn, self.call_btn,
+                    self.raise100_btn, self.raise150_btn):
             btn.configure(state="disabled")
 
     # ================================================================
@@ -609,7 +694,9 @@ class PokerGUI:
         self._show_hero_cards()
         self._show_opp_cards(face_up=False)
         self._update_display()
-        self.msg_label.configure(text="Your turn — choose an action.", text_color="#ffcc80")
+        self.msg_label.configure(
+            text="Your turn — choose an action.", text_color="#ffcc80",
+        )
         self._enable_actions(self.env.get_valid_actions())
 
     def _player_action(self, action: str) -> None:
@@ -628,12 +715,14 @@ class PokerGUI:
             self._show_opp_cards(face_up=True)
             if winner == "hero":
                 self.msg_label.configure(
-                    text=f"🎉 You WON!  Reward: ${result.reward:+.0f}  |  You: {hero_h}  Opp: {opp_h}",
+                    text=(f"🎉 You WON!  Reward: ${result.reward:+.0f}"
+                          f"  |  You: {hero_h}  Opp: {opp_h}"),
                     text_color=WR_LINE_COLOUR,
                 )
             elif winner == "opponent":
                 self.msg_label.configure(
-                    text=f"😞 You lost.  Reward: ${result.reward:+.0f}  |  You: {hero_h}  Opp: {opp_h}",
+                    text=(f"😞 You lost.  Reward: ${result.reward:+.0f}"
+                          f"  |  You: {hero_h}  Opp: {opp_h}"),
                     text_color="#ef5350",
                 )
             else:
@@ -668,7 +757,7 @@ class PokerGUI:
             return
         action = self.agent.get_action(self.current_state, valid, training=False)
         self.msg_label.configure(
-            text=f"🤖 AI chose: {action.upper()}", text_color="#80cbc4"
+            text=f"🤖 AI chose: {action.upper()}", text_color="#80cbc4",
         )
         result = self.env.step(action)
         self.current_state = result.next_state
@@ -681,10 +770,12 @@ class PokerGUI:
             opp_h = result.info.get("opponent_hand", "")
             self._show_opp_cards(face_up=True)
             if winner == "hero":
-                txt = f"🤖 AI WON!  Reward: ${result.reward:+.0f}  |  AI: {hero_h}  Opp: {opp_h}"
+                txt = (f"🤖 AI WON!  Reward: ${result.reward:+.0f}"
+                       f"  |  AI: {hero_h}  Opp: {opp_h}")
                 col = WR_LINE_COLOUR
             elif winner == "opponent":
-                txt = f"🤖 AI lost.  Reward: ${result.reward:+.0f}  |  AI: {hero_h}  Opp: {opp_h}"
+                txt = (f"🤖 AI lost.  Reward: ${result.reward:+.0f}"
+                       f"  |  AI: {hero_h}  Opp: {opp_h}")
                 col = "#ef5350"
             else:
                 txt = f"🤖 Tie!  Reward: ${result.reward:+.0f}  (odd chip → hero)"
@@ -721,7 +812,7 @@ class PokerGUI:
         self.progress.set(0)
 
         thread = threading.Thread(
-            target=self._train_worker, args=(n,), daemon=True
+            target=self._train_worker, args=(n,), daemon=True,
         )
         thread.start()
 
@@ -746,7 +837,7 @@ class PokerGUI:
                 f"Episodes: {stats['total_episodes']}  |  "
                 f"Win Rate: {stats['win_rate']:.1%}  |  "
                 f"Avg Reward: ${stats['avg_reward']:.1f}"
-            )
+            ),
         )
 
     def _training_done(self) -> None:
@@ -852,17 +943,14 @@ class PokerGUI:
 
         state_labels = [_pretty_state(s) for s in states]
         data = np.array(
-            [[snap[s].get(a, 0.0) for a in actions] for s in states]
+            [[snap[s].get(a, 0.0) for a in actions] for s in states],
         )
 
-        # Colourmap that blends the two accent colours used by Win-Rate
-        # (#69f0ae green) and Reward (#ef5350 red / #42a5f5 blue).
-        # Negative → red, neutral → slate, positive → green.
         cmap = LinearSegmentedColormap.from_list(
             "poker_wr", CMAP_STOPS, N=256,
         )
 
-        # --- rebuild figure so we don't stack colour-bars ---
+        # Rebuild figure so we don't stack colour-bars
         self.hm_fig.clear()
         self.hm_ax = self.hm_fig.add_subplot(111)
         self._style_ax(self.hm_ax, "Action", "State", "Q-Table Heatmap")
@@ -877,14 +965,14 @@ class PokerGUI:
             norm=norm,
         )
 
-        # Thin cell dividers (matching the grid colour of _style_ax)
+        # Thin cell dividers
         self.hm_ax.set_xticks(np.arange(len(actions)) - 0.5, minor=True)
         self.hm_ax.set_yticks(np.arange(len(states)) - 0.5, minor=True)
         self.hm_ax.grid(which="minor", color=GRID_COLOUR, linewidth=0.5, alpha=0.5)
-        self.hm_ax.grid(which="major", visible=False)  # hide default major grid
+        self.hm_ax.grid(which="major", visible=False)
         self.hm_ax.tick_params(which="minor", length=0)
 
-        # Labels – same font colours as Win-Rate / Reward axes
+        # Labels
         self.hm_ax.set_xticks(range(len(actions)))
         self.hm_ax.set_xticklabels(action_labels, fontsize=8, color=TICK_COLOUR)
         self.hm_ax.set_yticks(range(len(states)))
@@ -907,10 +995,10 @@ class PokerGUI:
                     fontsize=9, fontweight="bold", color=txt_col,
                 )
                 txt.set_path_effects([
-                    pe.withStroke(linewidth=2, foreground=f"{FIG_FACECOLOR}99")
+                    pe.withStroke(linewidth=2, foreground=f"{FIG_FACECOLOR}99"),
                 ])
 
-        # Colour bar – subtle, matching axis palette
+        # Colour bar
         cbar = self.hm_fig.colorbar(
             im, ax=self.hm_ax, fraction=0.046, pad=0.04,
         )
@@ -945,8 +1033,6 @@ class PokerGUI:
         data = np.array([[snap[s].get(a, 0.0) for a in actions] for s in states])
         n_rows, n_cols = data.shape
 
-        # Same red-slate-green palette used by the heatmap (mirrors the
-        # win-rate green #69f0ae and reward red #ef5350)
         cmap = LinearSegmentedColormap.from_list(
             "qtab_wr", CMAP_STOPS, N=256,
         )
@@ -984,27 +1070,24 @@ class PokerGUI:
         )
         tbl.auto_set_font_size(False)
         tbl.set_fontsize(9)
-        tbl.scale(1.0, 1.8)  # row height
+        tbl.scale(1.0, 1.8)
 
-        # Style every cell to match the dashboard palette
+        # Style every cell
         for (row_idx, col_idx), cell in tbl.get_celld().items():
             cell.set_edgecolor(GRID_COLOUR)
             cell.set_linewidth(0.5)
 
             if row_idx == 0:
-                # Column header row
                 cell.set_facecolor(LEGEND_BG)
                 cell.set_text_props(
                     color=TITLE_COLOUR, fontweight="bold", fontsize=9,
                 )
             elif col_idx == -1:
-                # Row label column
                 cell.set_facecolor(AX_FACECOLOR)
                 cell.set_text_props(
                     color=LABEL_COLOUR, fontweight="bold", fontsize=8,
                 )
             else:
-                # Data cell — colour from the shared cmap
                 q = data[row_idx - 1, col_idx]
                 brightness = norm(q)
                 cell.set_facecolor(cmap(brightness))

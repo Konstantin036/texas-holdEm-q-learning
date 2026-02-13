@@ -141,3 +141,12 @@ ACTION_DISPLAY: Final[Dict[str, tuple]] = {
 WINDOW_TITLE: Final[str] = "Texas Hold'em · Q-Learning Lab"
 WINDOW_GEOMETRY: Final[str] = "1400x900"
 WINDOW_MIN_SIZE: Final[tuple] = (1200, 800)
+
+# -- Multi-window layout --
+TABLE_WINDOW_TITLE: Final[str] = "♠ ♥  Poker Table  ♦ ♣"
+TABLE_WINDOW_GEOMETRY: Final[str] = "820x920"
+TABLE_WINDOW_MIN_SIZE: Final[tuple] = (700, 750)
+
+ANALYSIS_WINDOW_TITLE: Final[str] = "📊  Train and Analyse"
+ANALYSIS_WINDOW_GEOMETRY: Final[str] = "680x920"
+ANALYSIS_WINDOW_MIN_SIZE: Final[tuple] = (550, 700)
