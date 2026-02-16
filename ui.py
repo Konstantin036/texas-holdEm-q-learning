@@ -351,6 +351,13 @@ class PokerGUI:
         self.opp_label.pack(pady=(0, 4))
         self.opp_cards_frame = ctk.CTkFrame(self.opp_frame, fg_color="transparent")
         self.opp_cards_frame.pack()
+        self.opp_stack_label = ctk.CTkLabel(
+            self.opp_frame,
+            text="Stack: $150",
+            font=ctk.CTkFont(size=14),
+            text_color="#ef9a9a",
+        )
+        self.opp_stack_label.pack(pady=(4, 6))
         self._show_opp_cards(face_up=False)
 
         # Community cards
@@ -647,9 +654,16 @@ class PokerGUI:
     def _update_display(self, animate_card: bool = False) -> None:
         if self.current_state is None:
             return
-        self.pot_label.configure(text=f"Pot: ${self.current_state.pot}")
+        self.pot_label.configure(
+            text=f"Pot: ${self.current_state.pot}   "
+                 f"(Hero put ${self.current_state.hero_invested}  •  "
+                 f"Opp put ${self.current_state.opponent_invested})",
+        )
         self.hero_stack_label.configure(
             text=f"Stack: ${self.current_state.hero_stack}",
+        )
+        self.opp_stack_label.configure(
+            text=f"Stack: ${self.current_state.opponent_stack}",
         )
         self.street_label.configure(
             text=f"Street: {self.current_state.street.upper()}",
@@ -714,12 +728,19 @@ class PokerGUI:
         self._action_log = []
         self.log_label.configure(text="No actions yet.", text_color="#546e7a")
 
-    def _log_action(self, who: str, action: str, street: str) -> None:
+    def _log_action(self, who: str, action: str, street: str,
+                    bet_amount: int = 0, pot: int = 0) -> None:
         """Append an action to the visible log."""
         pretty = {"fold": "Fold", "call": "Call",
                   "raise_100": "Raise $100", "raise_150": "All-In $150"}
         tag = pretty.get(action, action)
-        self._action_log.append(f"{street.upper():>8}  │  {who:<10} → {tag}")
+        if bet_amount > 0:
+            line = (f"{street.upper():>8}  │  {who:<10} → {tag}"
+                    f"  (${bet_amount})  │  Pot: ${pot}")
+        else:
+            line = (f"{street.upper():>8}  │  {who:<10} → {tag}"
+                    f"          │  Pot: ${pot}")
+        self._action_log.append(line)
         self.log_label.configure(
             text="\n".join(self._action_log),
             text_color="#b0bec5",
@@ -761,9 +782,34 @@ class PokerGUI:
         self._show_opp_cards(face_up=False)
         self._update_display()
         self._clear_result()
-        self.msg_label.configure(
-            text="Your turn — choose an action.", text_color="#ffcc80",
-        )
+
+        # Log opponent's opening action (opponent acts first)
+        opp_open = self.env.opp_pre_action
+        if opp_open:
+            self._log_action("Opponent", opp_open, self.current_state.street,
+                            bet_amount=self.env.opp_pre_action_bet,
+                            pot=self.env.pot)
+
+        if self.env.done:
+            # Opponent folded immediately — hero wins
+            self.game_active = False
+            self._show_opp_cards(face_up=True)
+            self._show_result(
+                "🎉 Opponent folded! You win the pot.",
+                text_color="#ffffff", bg_color="#1b5e20",
+            )
+            return
+
+        if opp_open and opp_open.startswith("raise"):
+            self.msg_label.configure(
+                text="Opponent opened with a raise — your turn.",
+                text_color="#ffcc80",
+            )
+        else:
+            self.msg_label.configure(
+                text="Opponent checked/called — your turn.",
+                text_color="#ffcc80",
+            )
         self._enable_actions(self.env.get_valid_actions())
 
     def _player_action(self, action: str) -> None:
@@ -771,13 +817,26 @@ class PokerGUI:
             return
         self._disable_actions()
         street_before = self.current_state.street if self.current_state else "?"
-        self._log_action("You", action, street_before)
         result: StepResult = self.env.step(action)
 
-        # Log opponent's response (if any)
+        hero_bet = result.info.get("hero_bet", 0)
+        opp_bet = result.info.get("opp_bet", 0)
+        pot_after_hero = result.info.get("pot_after_hero", self.env.pot)
+        self._log_action("You", action, street_before,
+                        bet_amount=hero_bet, pot=pot_after_hero)
+
+        # Log opponent's response on the same street (if any)
         opp_act = result.info.get("opp_action")
         if opp_act:
-            self._log_action("Opponent", opp_act, street_before)
+            self._log_action("Opponent", opp_act, street_before,
+                            bet_amount=opp_bet, pot=self.env.pot)
+
+        # Log opponent's opening action on the NEW street (if any)
+        opp_pre = result.info.get("opp_pre_action")
+        if opp_pre:
+            opp_pre_bet = result.info.get("opp_pre_action_bet", 0)
+            self._log_action("Opponent", opp_pre, result.next_state.street,
+                            bet_amount=opp_pre_bet, pot=self.env.pot)
 
         self.current_state = result.next_state
         self._update_display(animate_card=True)
@@ -822,6 +881,23 @@ class PokerGUI:
         self._update_display()
         self._disable_actions()
         self._clear_result()
+
+        # Log opponent's opening action (opponent acts first)
+        opp_open = self.env.opp_pre_action
+        if opp_open:
+            self._log_action("Opponent", opp_open, self.current_state.street,
+                            bet_amount=self.env.opp_pre_action_bet,
+                            pot=self.env.pot)
+
+        if self.env.done:
+            self.game_active = False
+            self._show_opp_cards(face_up=True)
+            self._show_result(
+                "🎉 Opponent folded! AI wins the pot.",
+                text_color="#ffffff", bg_color="#1b5e20",
+            )
+            return
+
         self.msg_label.configure(text="🤖 AI is thinking…", text_color="#80cbc4")
         self.root.after(800, self._ai_step)
 
@@ -833,16 +909,29 @@ class PokerGUI:
             return
         action = self.agent.get_action(self.current_state, valid, training=False)
         street_before = self.current_state.street if self.current_state else "?"
-        self._log_action("AI", action, street_before)
+        result = self.env.step(action)
+
+        hero_bet = result.info.get("hero_bet", 0)
+        opp_bet = result.info.get("opp_bet", 0)
+        pot_after_hero = result.info.get("pot_after_hero", self.env.pot)
+        self._log_action("AI", action, street_before,
+                        bet_amount=hero_bet, pot=pot_after_hero)
         self.msg_label.configure(
             text=f"🤖 AI chose: {action.upper()}", text_color="#80cbc4",
         )
-        result = self.env.step(action)
 
-        # Log opponent's response (if any)
+        # Log opponent's response on the same street (if any)
         opp_act = result.info.get("opp_action")
         if opp_act:
-            self._log_action("Opponent", opp_act, street_before)
+            self._log_action("Opponent", opp_act, street_before,
+                            bet_amount=opp_bet, pot=self.env.pot)
+
+        # Log opponent's opening action on the NEW street (if any)
+        opp_pre = result.info.get("opp_pre_action")
+        if opp_pre:
+            opp_pre_bet = result.info.get("opp_pre_action_bet", 0)
+            self._log_action("Opponent", opp_pre, result.next_state.street,
+                            bet_amount=opp_pre_bet, pot=self.env.pot)
 
         self.current_state = result.next_state
         self._update_display(animate_card=True)

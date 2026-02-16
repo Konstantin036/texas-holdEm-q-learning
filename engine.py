@@ -450,6 +450,9 @@ class PokerEnv:
         # Fixed starting hand & flop
         self.hero_cards: List[Card] = [Card("8", "h"), Card("9", "h")]
         self.flop: List[Card] = [Card("J", "h"), Card("Q", "h"), Card("2", "c")]
+        self.hero_acts_first: bool = False  # opponent acts first
+        self.opp_pre_action: Optional[str] = None  # tracks opponent's opening action
+        self.opp_pre_action_bet: int = 0  # how much opponent bet in pre-action
 
         # Mutable game state
         self.deck: List[Card] = []
@@ -499,6 +502,12 @@ class PokerEnv:
         self.street = "flop"
         self.done = False
         self.winner = None
+        self.opp_pre_action = None
+        self.opp_pre_action_bet = 0
+
+        # If opponent acts first, let them act before hero sees the state
+        if not self.hero_acts_first:
+            self._opponent_pre_action()
 
         return self._get_state()
 
@@ -512,6 +521,39 @@ class PokerEnv:
         if self.hero_stack >= 150:
             valid.append("raise_150")
         return valid
+
+    def _opponent_pre_action(self) -> None:
+        """Let the opponent open the action before hero decides."""
+        opp_valid: List[str] = ["fold", "call"]
+        if self.opponent_stack >= 100:
+            opp_valid.append("raise_100")
+
+        opp_action = self.opponent_policy.get_action(
+            self._get_state().to_dict(), opp_valid
+        )
+        self.opp_pre_action = opp_action
+
+        if opp_action == "fold":
+            self.done = True
+            self.winner = "hero"
+            self.opp_pre_action_bet = 0
+            return
+
+        if opp_action == "call":
+            to_call = max(0, self.hero_invested - self.opponent_invested)
+            actual = min(to_call, self.opponent_stack)
+            self.opponent_stack -= actual
+            self.opponent_invested += actual
+            self.pot += actual
+            self.opp_pre_action_bet = actual
+
+        elif opp_action == "raise_100":
+            total_bet = 100 + max(0, self.hero_invested - self.opponent_invested)
+            actual = min(total_bet, self.opponent_stack)
+            self.opponent_stack -= actual
+            self.opponent_invested += actual
+            self.pot += actual
+            self.opp_pre_action_bet = actual
 
     def step(self, action: str) -> StepResult:
         """Execute *action* and return ``(next_state, reward, done, info)``.
@@ -530,8 +572,11 @@ class PokerEnv:
             reward = float(-(initial_stack - self.hero_stack) - self.hero_invested)
             return StepResult(
                 self._get_state(), reward, True,
-                {"winner": "opponent", "hero_action": "fold"},
+                {"winner": "opponent", "hero_action": "fold",
+                 "hero_bet": 0, "opp_bet": 0},
             )
+
+        hero_bet: int = 0
 
         if action == "call":
             to_call = max(0, self.opponent_invested - self.hero_invested)
@@ -539,6 +584,7 @@ class PokerEnv:
             self.hero_stack -= actual
             self.hero_invested += actual
             self.pot += actual
+            hero_bet = actual
 
         elif action == "raise_100":
             total_bet = 100 + max(0, self.opponent_invested - self.hero_invested)
@@ -546,50 +592,68 @@ class PokerEnv:
             self.hero_stack -= actual
             self.hero_invested += actual
             self.pot += actual
+            hero_bet = actual
 
         elif action == "raise_150":
             actual = self.hero_stack
             self.hero_invested += actual
             self.pot += actual
             self.hero_stack = 0
+            hero_bet = actual
+
+        pot_after_hero: int = self.pot
 
         # ---- Opponent responds ----------------------------------------
-        opp_valid: List[str] = ["fold", "call"]
-        if self.opponent_stack >= 100:
-            opp_valid.append("raise_100")
+        # If the opponent already opened this street (pre-action) and hero
+        # merely called (did not raise above), the action is closed —
+        # skip the opponent response and advance the street.
+        hero_raised_over = self.hero_invested > self.opponent_invested
 
-        opp_action = self.opponent_policy.get_action(
-            self._get_state().to_dict(), opp_valid
-        )
+        opp_action: Optional[str] = None
+        opp_bet: int = 0
 
-        if opp_action == "fold":
-            self.done = True
-            self.winner = "hero"
-            reward = float(self.pot - (initial_stack - self.hero_stack))
-            return StepResult(
-                self._get_state(), reward, True,
-                {"winner": "hero", "opp_action": "fold"},
+        if hero_raised_over:
+            opp_valid: List[str] = ["fold", "call"]
+            if self.opponent_stack >= 100:
+                opp_valid.append("raise_100")
+
+            opp_action = self.opponent_policy.get_action(
+                self._get_state().to_dict(), opp_valid
             )
 
-        if opp_action == "call":
-            to_call = max(0, self.hero_invested - self.opponent_invested)
-            actual = min(to_call, self.opponent_stack)
-            self.opponent_stack -= actual
-            self.opponent_invested += actual
-            self.pot += actual
+            if opp_action == "fold":
+                self.done = True
+                self.winner = "hero"
+                reward = float(self.pot - (initial_stack - self.hero_stack))
+                return StepResult(
+                    self._get_state(), reward, True,
+                    {"winner": "hero", "opp_action": "fold",
+                     "hero_bet": hero_bet, "opp_bet": 0,
+                     "pot_after_hero": pot_after_hero},
+                )
 
-        elif opp_action == "raise_100":
-            total_bet = 100 + max(0, self.hero_invested - self.opponent_invested)
-            actual = min(total_bet, self.opponent_stack)
-            self.opponent_stack -= actual
-            self.opponent_invested += actual
-            self.pot += actual
-            # Hero auto-calls the raise (simplified)
-            to_call = max(0, self.opponent_invested - self.hero_invested)
-            actual_call = min(to_call, self.hero_stack)
-            self.hero_stack -= actual_call
-            self.hero_invested += actual_call
-            self.pot += actual_call
+            if opp_action == "call":
+                to_call = max(0, self.hero_invested - self.opponent_invested)
+                actual = min(to_call, self.opponent_stack)
+                self.opponent_stack -= actual
+                self.opponent_invested += actual
+                self.pot += actual
+                opp_bet = actual
+
+            elif opp_action == "raise_100":
+                total_bet = 100 + max(0, self.hero_invested - self.opponent_invested)
+                actual = min(total_bet, self.opponent_stack)
+                self.opponent_stack -= actual
+                self.opponent_invested += actual
+                self.pot += actual
+                opp_bet = actual
+                # Hero auto-calls the raise (simplified)
+                to_call = max(0, self.opponent_invested - self.hero_invested)
+                actual_call = min(to_call, self.hero_stack)
+                self.hero_stack -= actual_call
+                self.hero_invested += actual_call
+                self.pot += actual_call
+                hero_bet += actual_call
 
         # ---- Advance street -------------------------------------------
         if self.street == "flop":
@@ -599,9 +663,35 @@ class PokerEnv:
             self.river = self.deck.pop()
             self.street = "river"
         elif self.street == "river":
-            return self._showdown(initial_stack, opp_action)
+            return self._showdown(initial_stack, opp_action or "call",
+                                  hero_bet=hero_bet, opp_bet=opp_bet,
+                                  pot_after_hero=pot_after_hero)
 
-        return StepResult(self._get_state(), 0.0, False, {"opp_action": opp_action})
+        # On the new street, let opponent open again if they act first
+        if not self.hero_acts_first:
+            self._opponent_pre_action()
+            # If opponent folded on the new street opening
+            if self.done:
+                reward = float(self.pot - (initial_stack - self.hero_stack))
+                return StepResult(
+                    self._get_state(), reward, True,
+                    {"winner": "hero",
+                     "opp_action": opp_action,
+                     "opp_pre_action": self.opp_pre_action,
+                     "hero_bet": hero_bet, "opp_bet": opp_bet,
+                     "pot_after_hero": pot_after_hero},
+                )
+
+        info: Dict[str, Any] = {
+            "hero_bet": hero_bet, "opp_bet": opp_bet,
+            "pot_after_hero": pot_after_hero,
+        }
+        if opp_action is not None:
+            info["opp_action"] = opp_action
+        if self.opp_pre_action is not None:
+            info["opp_pre_action"] = self.opp_pre_action
+            info["opp_pre_action_bet"] = self.opp_pre_action_bet
+        return StepResult(self._get_state(), 0.0, False, info)
 
     def get_remaining_deck(self) -> List[Card]:
         """Cards remaining in the deck (for outs calculation)."""
@@ -644,7 +734,9 @@ class PokerEnv:
             opponent_invested=self.opponent_invested,
         )
 
-    def _showdown(self, initial_stack: int, opp_action: str = "call") -> StepResult:
+    def _showdown(self, initial_stack: int, opp_action: str = "call",
+                   hero_bet: int = 0, opp_bet: int = 0,
+                   pot_after_hero: int = 0) -> StepResult:
         """Resolve the hand at showdown with proper pot splitting."""
         self.street = "showdown"
         self.done = True
@@ -677,5 +769,8 @@ class PokerEnv:
             "hero_rank": hero_hr.rank,
             "opponent_rank": opp_hr.rank,
             "opp_action": opp_action,
+            "hero_bet": hero_bet,
+            "opp_bet": opp_bet,
+            "pot_after_hero": pot_after_hero,
         }
         return StepResult(self._get_state(), reward, True, info)

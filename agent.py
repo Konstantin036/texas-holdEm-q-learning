@@ -178,8 +178,13 @@ class QLearningAgent:
         """Run one training episode and return ``(total_reward, won)``."""
         state: GameState = env.reset()
         total_reward: float = 0.0
-        done: bool = False
+        done: bool = env.done  # may already be True if opponent folded pre-action
         info: Dict[str, Any] = {}
+        if done:
+            won = env.winner == "hero"
+            self.episode_rewards.append(total_reward)
+            self.episode_wins.append(1 if won else 0)
+            return total_reward, won
 
         while not done:
             valid = env.get_valid_actions()
