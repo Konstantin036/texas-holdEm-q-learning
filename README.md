@@ -1,382 +1,834 @@
-# Texas Hold'em · Q-Learning Lab
+<div align="center">
 
-> A high-fidelity Python simulation of a **simplified heads-up Texas Hold'em MDP** (post-flop) solved with **tabular Q-Learning**.
+# Texas Hold'em -- Q-Learning Lab
 
-![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
-![License MIT](https://img.shields.io/badge/license-MIT-green)
+<br/>
 
----
+### Choose your language / Izaberite jezik
 
-## Table of Contents
+<a href="#-english-version">
+  <img src="https://img.shields.io/badge/🇬🇧_English-0057B7?style=for-the-badge&logoColor=white" alt="English"/>
+</a>
+&nbsp;&nbsp;&nbsp;
+<a href="#-srpska-verzija">
+  <img src="https://img.shields.io/badge/🇷🇸_Srpski-C6363C?style=for-the-badge&logoColor=white" alt="Srpski"/>
+</a>
 
-1. [Overview](#overview)
-2. [Architecture (MVC)](#architecture-mvc)
-3. [MDP Formulation](#mdp-formulation)
-4. [Hand Ranking Engine](#hand-ranking-engine)
-5. [Q-Learning Agent](#q-learning-agent)
-6. [GUI Features](#gui-features)
-7. [Installation](#installation)
-8. [Usage](#usage)
-9. [Convergence to Nash Equilibrium](#convergence-to-nash-equilibrium)
-10. [File Descriptions](#file-descriptions)
-11. [Customisation](#customisation)
-12. [Troubleshooting](#troubleshooting)
+</div>
 
 ---
+---
+
+<br/>
+
+<h1 id="-english-version">🇬🇧 English Version</h1>
 
 ## Overview
 
-This project implements a simplified **heads-up** (1 v 1) Texas Hold'em starting from the **flop** with a fixed hero hand:
+A Reinforcement Learning agent for simplified Heads-Up Texas Hold'em poker.
 
-| Component | Value |
-|-----------|-------|
-| **Hero** | 8♥ 9♥ |
-| **Flop** | J♥ Q♥ 2♣ |
-| **Stacks** | $150 each |
-| **Pot** | $100 (pre-flop action already concluded) |
-
-Hero holds a **double-gutter straight draw** (needs T or K) **and** a **flush draw** (9 heart outs).  Combined unique outs ≈ 15 cards, giving roughly **54 % equity** to improve by the river.
-
-The opponent is modelled as a **fixed stochastic policy** (analogous to the dealer in Blackjack).  A **Q-Learning** agent learns, through thousands of episodes, to exploit this sub-game.
+A Q-Learning agent learns the optimal post-flop strategy for a fixed hero hand
+(8&#9829; 9&#9829;) on a flop of (J&#9829; Q&#9829; 2&#9827;) -- a combined
+flush draw and open-ended straight draw with approximately 15 outs and ~54%
+equity to improve by the river.  The agent trains over thousands of episodes
+against a stochastic opponent, builds a Q-table, and then plays autonomously
+inside a two-window CustomTkinter GUI.
 
 ---
 
-## Architecture (MVC)
+## Architecture
+
+The project follows a strict **Model-Controller-View** separation across five
+files with zero circular dependencies.
 
 ```
-┌────────────────────────────┐
-│          main.py           │  ← Entry point
-└─────────────┬──────────────┘
-              │ imports
-┌─────────────▼──────────────┐
-│           ui.py            │  ← View + Controller (CustomTkinter)
-│  • Card animations         │
-│  • Q-Table heatmap         │
-│  • Win-rate live graph     │
-│  • Human-vs-AI mode        │
-└─────────────┬──────────────┘
-              │ imports
-┌─────────────▼──────────────┐
-│          agent.py          │  ← Controller (ε-greedy Q-Learning)
-│  • Q-table management      │
-│  • ε-greedy action select  │
-│  • TD update rule          │
-└─────────────┬──────────────┘
-              │ imports
-┌─────────────▼──────────────┐
-│         engine.py          │  ← Model (MDP environment)
-│  • Card, HandEvaluator     │
-│  • GameState (NamedTuple)  │
-│  • PokerEnv (transitions)  │
-│  • OpponentPolicy          │
-└─────────────┬──────────────┘
-              │ imports
-┌─────────────▼──────────────┐
-│         config.py          │  ← Constants & theme palette
-│  • Poker rules & defaults  │
-│  • Q-Learning defaults     │
-│  • GUI theme colours       │
-└────────────────────────────┘
+main.py ──> ui.py (View) ──> agent.py (Controller) ──> environment.py (Model) ──> config.py
 ```
 
-Strict **separation of concerns** — the environment knows nothing about the GUI, the agent knows nothing about rendering, and the GUI orchestrates both.
+```mermaid
+graph TD
+    MAIN["main.py<br/><i>Entry Point</i>"]
+    UI["ui.py<br/><i>View — Two-window GUI</i>"]
+    AGENT["agent.py<br/><i>Controller — Q-Learning</i>"]
+    ENV["environment.py<br/><i>Model — Poker MDP</i>"]
+    CFG["config.py<br/><i>Constants & Palette</i>"]
+
+    MAIN --> UI
+    UI --> AGENT
+    UI --> ENV
+    AGENT --> ENV
+    ENV --> CFG
+    UI --> CFG
+
+    style MAIN fill:#1a472a,stroke:#ffd700,color:#fff
+    style UI fill:#2d5016,stroke:#ffd700,color:#fff
+    style AGENT fill:#1565c0,stroke:#ffd700,color:#fff
+    style ENV fill:#b71c1c,stroke:#ffd700,color:#fff
+    style CFG fill:#37474f,stroke:#ffd700,color:#fff
+```
+
+| File | Role | Lines | Responsibility |
+|------|------|------:|----------------|
+| `config.py` | Constants | ~155 | Every magic number, colour token, and hyperparameter default |
+| `environment.py` | Model | ~720 | Card representation, hand evaluator (BGC-compliant), opponent policy, MDP engine |
+| `agent.py` | Controller | ~335 | Q-table, epsilon-greedy action selection, Bellman update, training loop |
+| `ui.py` | View | ~1470 | Poker Table window, Train & Analyse window, timer management |
+| `main.py` | Entry | ~25 | Instantiates `PokerGUI` and calls `run()` |
 
 ---
 
-## MDP Formulation
+## The Reinforcement Learning Core
+
+### State-Action-Reward Loop
+
+The environment is modelled as a **Markov Decision Process** where the agent
+(Hero) interacts with a fixed stochastic opponent embedded in the environment
+itself -- analogous to the Dealer in Blackjack.
+
+```
+    ┌─────────────────────────────────────────────┐
+    │               ENVIRONMENT                   │
+    │  ┌─────────┐  ┌──────────┐  ┌───────────┐  │
+    │  │ Deck &  │  │ Opponent │  │ Showdown  │  │
+    │  │ Board   │  │ Policy   │  │ Evaluator │  │
+    │  └─────────┘  └──────────┘  └───────────┘  │
+    └──────────┬──────────────────────┬───────────┘
+               │  state(s)           │ reward(r)
+               ▼                     ▲
+    ┌──────────────────────────────────────────────┐
+    │                 Q-LEARNING AGENT             │
+    │                                              │
+    │   Q(s,a) <-- Q(s,a) + a[r + g*max(Q) - Q]   │
+    │                                              │
+    │   policy: e-greedy over Q-table              │
+    └──────────────────┬───────────────────────────┘
+                       │  action(a)
+                       ▼
+                  ENVIRONMENT
+```
 
 ### State Space
 
+Each state is encoded as a compact string key:
+
 ```
-S = (street, hero_stack, pot)
+"<street>_<pot>_<hero_stack>"
 ```
 
-Where `street ∈ {flop, turn, river, showdown}`.  Community cards are implicitly encoded because the hero hand and flop are fixed (only the turn and river are stochastic).
+| Component | Values | Example |
+|-----------|--------|---------|
+| Street | `flop`, `turn`, `river` | `turn` |
+| Pot | Running total in $ | `200` |
+| Hero Stack | Remaining chips in $ | `100` |
+
+Example state key: `"turn_200_100"` -- the Turn card is on the board, the pot
+holds $200, and Hero has $100 remaining.  This abstraction keeps the Q-table
+small (~20-30 unique states) while preserving the essential decision variables.
 
 ### Action Space
 
+Five atomic actions are available to the agent on each decision point:
+
+| Action | Code | Effect |
+|--------|------|--------|
+| Fold | `fold` | Surrender -- lose all invested chips |
+| Check / Call | `call` | Match the opponent's current bet (or check if $0) |
+| Raise $50 | `raise_50` | Call + add $50 on top |
+| Raise $100 | `raise_100` | Call + add $100 on top |
+| All-In | `raise_150` | Push entire remaining stack |
+
+Action availability is dynamic -- `raise_100` is only valid when Hero has at
+least $100 remaining.  The `raise_150` label always means "push whatever is
+left", even if that is less than $150.
+
+### Reward Signal
+
 ```
-A = {fold, call, raise_100, raise_150}
+R = hero_final_stack - INITIAL_STACK
 ```
 
-`raise_150` is an all-in.
+| Outcome | Typical Reward |
+|---------|----------------|
+| Hero wins showdown (no raises) | +$100 |
+| Hero wins after raising $50 | +$150 |
+| Hero folds on flop | -$0 (lost nothing beyond the initial pot) |
+| Hero loses showdown (called $100) | -$100 |
+| Hero loses all-in | -$150 |
 
-### Transition Dynamics
+The reward is zero-centered around the initial stack of $150, making it
+immediately interpretable as profit or loss.
 
-After both players act on a street, the next community card is dealt **uniformly at random** from the 47 remaining unknown cards (52 − 2 hero − 3 flop).
+---
+
+## The Atomic Turn Architecture
+
+The engine enforces a strict **one-action-per-call** protocol.  No function
+ever executes more than one player action.
+
+### Street Settlement Rules
+
+The settlement logic differs by street to guarantee correct game flow:
 
 ```
-P(s' | s, a)  ∝  Uniform over remaining deck
+ FLOP / TURN                          RIVER
+ ──────────                          ─────
+ Opponent opens (check/raise)        Opponent opens (check/raise)
+       │                                   │
+ Hero acts (any non-fold action)     Hero acts
+       │                                   │
+ STREET SETTLED IMMEDIATELY          Bets matched?
+       │                              │          │
+ "Deal Next Card" button appears    Yes          No
+       │                              │          │
+ Dealer deals Turn / River          SHOWDOWN   Opponent responds
+                                                  │
+                                              Bets matched?
+                                               │        │
+                                             Yes        ...
+                                               │
+                                            SHOWDOWN
 ```
 
-### Reward Function
+**Flop and Turn:** Hero's non-fold action always settles the street immediately.
+The Dealer must deal the next community card before any further action occurs.
+
+**River:** The standard poker rule applies -- both players must act and bets must
+be equal (or a player must be all-in) before proceeding to showdown.
+
+### Settled Board State
+
+When a street settles, the engine freezes all action:
 
 ```
-R = ΔStack_hero = stack_final − stack_initial
+  ┌─────────────────────────────────────────────────────────────┐
+  │                     BOARD STATE: SETTLED                    │
+  ├──────────┬────────────┬───────────┬─────────────────────────┤
+  │  Street  │  Hero Bet  │  Opp Bet  │  Status                │
+  ├──────────┼────────────┼───────────┼─────────────────────────┤
+  │  FLOP    │    $50     │    $0     │  street_settled = True  │
+  │          │            │           │  valid_actions = []     │
+  │          │            │           │  >> "Deal Next Card"    │
+  └──────────┴────────────┴───────────┴─────────────────────────┘
+
+  After advance_street():
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │                    BOARD STATE: TURN OPEN                   │
+  ├──────────┬────────────┬───────────┬─────────────────────────┤
+  │  Street  │  Hero Bet  │  Opp Bet  │  Status                │
+  ├──────────┼────────────┼───────────┼─────────────────────────┤
+  │  TURN    │    $0      │    $0     │  street_settled = False │
+  │          │            │           │  Opponent opens action  │
+  └──────────┴────────────┴───────────┴─────────────────────────┘
 ```
 
-No intermediate shaping — the agent receives reward **only** when the hand concludes (fold, opponent fold, or showdown).
+The `street_settled` flag acts as a hard gate:
+- `get_valid_actions()` returns `[]` while the flag is set.
+- No player can act until the caller invokes `advance_street()`.
+- The UI shows the "Deal Next Card" button; in Watch AI mode it auto-clicks.
 
-### Pot Splitting
+### River Showdown -- Bets-Matched Logic
 
-On a tied showdown, the pot is split evenly.  **Odd chips go to the hero** (player left of the dealer), per BGC rules:
+On the river, the engine checks three conditions before proceeding to showdown:
 
-```python
-hero_share = (pot + 1) // 2
 ```
+bets_matched = (
+    hero_acted AND opp_acted
+    AND (
+        hero_street_bet == opp_street_bet          -- normal call
+        OR (hero_stack == 0
+            AND hero_bet <= opp_bet)                -- all-in for less
+        OR (hero_stack == 0 AND opp_stack == 0)     -- both all-in
+    )
+)
+```
+
+This handles edge cases like a player going all-in for less than the opponent's
+bet -- the bet difference is accepted and play proceeds to showdown.
+
+---
+
+## Q-Learning Implementation
+
+### The Bellman Update
+
+```
+Q(s, a) <-- Q(s, a) + alpha * [ r + gamma * max Q(s', a') - Q(s, a) ]
+                                          a'
+```
+
+| Symbol | Name | Default | Role |
+|--------|------|---------|------|
+| alpha | Learning Rate | 0.10 | How fast Q-values update |
+| gamma | Discount Factor | 0.95 | Weight of future rewards |
+| epsilon | Exploration Rate | 0.20 | Probability of random action |
+
+### Training Loop (One Episode)
+
+```
+ reset() --> state s0
+     │
+     ▼
+ ┌──────────────────────────────────┐
+ │  While not done:                 │
+ │                                  │
+ │  if current_player == opponent:  │
+ │      step_opponent()             │
+ │                                  │
+ │  if current_player == hero:      │
+ │      a = epsilon_greedy(s)       │
+ │      step(a) --> s', r, done     │
+ │                                  │
+ │      if street_settled:          │
+ │          advance_street()        │◄── Advance BEFORE Q-update
+ │          s' = new street state   │    so Q(flop) sees Q(turn)
+ │                                  │
+ │      Q(s,a) += alpha * [         │
+ │        r + gamma*max(Q(s'))      │
+ │        - Q(s,a)                  │
+ │      ]                           │
+ │      s = s'                      │
+ └──────────────────────────────────┘
+```
+
+The critical detail: when Hero acts on the flop or turn and the street settles,
+the training loop calls `advance_street()` **before** the Q-update.  This
+ensures that `Q(flop_state, action)` is updated using the Q-values of the
+**next street's** state (which carries real learned values), rather than the
+dead settled state where `max Q(s') = 0`.
+
+Without this, all flop and turn Q-values converge to zero and the agent only
+learns on the river -- losing critical strategic depth.
+
+### Convergence Insight
+
+Hero holds 8&#9829; 9&#9829; on a J&#9829; Q&#9829; 2&#9827; flop:
+
+- **Flush draw:** 9 remaining hearts (9 outs)
+- **Straight draw:** Needs T or K (8 outs, minus overlaps)
+- **Combined unique outs:** ~15
+- **Equity to improve by river:** ~54%
+
+The agent should converge to favouring **call** and moderate **raises** on
+early streets, building pot equity with the draw, and playing aggressively on
+the river when the hand completes.
 
 ---
 
 ## Hand Ranking Engine
 
-Strictly follows the BGC Texas Hold'em hierarchy:
+The evaluator follows the **BGC (British Gambling Commission) Texas Hold'em**
+hierarchy, implemented as a best-of-7 combinatorial evaluator:
 
-| Rank | Hand | Numeric |
-|------|------|---------|
-| 10 | Royal Flush | A♠K♠Q♠J♠T♠ |
-| 9 | Straight Flush | 9♥8♥7♥6♥5♥ |
-| 8 | Four of a Kind | K♠K♥K♦K♣5♠ |
-| 7 | Full House | K♠K♥K♦5♠5♥ |
-| 6 | Flush | K♥9♥7♥5♥2♥ |
-| 5 | Straight | K♠Q♥J♦T♣9♠ |
-| 4 | Three of a Kind | 7♠7♥7♦K♣2♠ |
-| 3 | Two Pair | K♠K♥7♦7♣2♠ |
-| 2 | One Pair | A♠A♥7♦5♣2♠ |
-| 1 | High Card | A♠K♥9♦5♣2♠ |
+| Rank | Hand | Example |
+|-----:|------|---------|
+| 10 | Royal Flush | A&#9829; K&#9829; Q&#9829; J&#9829; T&#9829; |
+| 9 | Straight Flush | 9&#9827; 8&#9827; 7&#9827; 6&#9827; 5&#9827; |
+| 8 | Four of a Kind | K K K K 3 |
+| 7 | Full House | Q Q Q 7 7 |
+| 6 | Flush | A&#9830; T&#9830; 8&#9830; 5&#9830; 2&#9830; |
+| 5 | Straight | T 9 8 7 6 |
+| 4 | Three of a Kind | 8 8 8 A J |
+| 3 | Two Pair | A A 9 9 K |
+| 2 | One Pair | J J A Q 4 |
+| 1 | High Card | A K 9 7 3 |
 
-### Ace Dynamics
+Ace dynamics: high in `A K Q J T`, low in `5 4 3 2 A` (the wheel).
 
-The Ace plays **both** roles:
-
-- **High**: A-K-Q-J-T straight (the Broadway)
-- **Low**: 5-4-3-2-A straight (the Wheel)
-
-The evaluator considers all C(7,5) = 21 five-card combinations from the 7-card pool and returns the best.
+Tie resolution: when ranks are equal, kicker comparison uses ordered tiebreaker
+tuples.  On exact ties the pot is split with the odd chip going to Hero
+(player left of the dealer, per BGC rules).
 
 ---
 
-## Q-Learning Agent
+## Opponent Policy
 
-### Update Rule
+The opponent is a **fixed stochastic policy** embedded in the environment --
+not a learning agent.  It is part of the environment dynamics, similar to the
+Dealer in Blackjack.
 
-$$Q(s, a) \leftarrow Q(s, a) + \alpha \bigl[ r + \gamma \max_{a'} Q(s', a') - Q(s, a) \bigr]$$
+| Parameter | Default | Behaviour |
+|-----------|---------|-----------|
+| `aggression` | 0.30 | Probability of raising $100 when able |
+| `fold_prob` | 0.10 | Probability of folding when facing a bet |
 
-### Exploration Strategy
-
-**ε-greedy**: with probability ε choose a random valid action; otherwise choose the action with the highest Q-value (ties broken randomly).
-
-### Hyperparameters
-
-| Symbol | Parameter | Default | Range |
-|--------|-----------|---------|-------|
-| α | `learning_rate` | 0.10 | 0.01 – 0.5 |
-| γ | `discount_factor` | 0.95 | 0.90 – 0.99 |
-| ε | `epsilon` | 0.20 | 0.05 – 0.40 |
-
-All three are **exposed** in the GUI and in the constructor for programmatic tuning.
+Decision priority: Fold check --> Raise check --> Default to Call.
 
 ---
 
-## GUI Features
+## GUI Overview
 
-Built with **CustomTkinter** for a modern dark-mode aesthetic.
+Two-window CustomTkinter interface with dark theme:
 
-| Feature | Description |
-|---------|-------------|
-| 🃏 **Card widgets** | Visual card rendering with suit colours & smooth deal animation |
-| 📊 **Q-Table Heatmap** | Real-time colour-coded matrix (states × actions) using RdYlGn colourmap |
-| 📈 **Win-Rate Graph** | 50-episode rolling average updated after training |
-| 📉 **Reward Graph** | Raw + moving-average reward curve |
-| 🧠 **AI Thought Process** | Live Q-value display for the current game state |
-| 🎮 **Human vs AI** | Play manually while seeing what the AI *would* choose |
-| 🤖 **Watch AI** | Step-by-step AI play with 1.2 s delays |
-| ⚙️ **Hyperparameter Tuning** | Adjust α, γ, ε from the GUI before training |
-| 📊 **Progress Bar** | Real-time training progress indicator |
+**Poker Table** (primary window):
+- Card widgets with suit-coloured symbols
+- Real-time AI Thought Process panel (Q-value bar chart)
+- Action log tracking every move
+- Three modes: Manual Play, Watch AI, Next Hand
+
+**Train & Analyse** (secondary window):
+- Hyperparameter controls (alpha, gamma, epsilon, episodes)
+- Training progress bar
+- Four analytics tabs: Win Rate, Reward History, Q-Table Heatmap, Q-Table Grid
+
+Timer management uses a tracked `_schedule()` / `_cancel_pending()` system to
+prevent ghost callbacks and race conditions between UI events.
 
 ---
 
-## Installation
+## Setup & Run
 
-### Prerequisites
-
-- **Python 3.9+**
-- **tkinter** (usually bundled with Python)
-
-### Steps
+**1. Install dependencies:**
 
 ```bash
-# 1. Clone / navigate to the project
-cd TexasHold\'em
-
-# 2. (Optional) create a virtual environment
-python -m venv .venv && source .venv/bin/activate
-
-# 3. Install dependencies
 pip install -r requirements.txt
 ```
 
-If `tkinter` is missing on Linux:
+**2. Clone and enter the project:**
 
 ```bash
-sudo apt-get install python3-tk
+git clone <repository-url>
+cd TexasHoldEm
 ```
 
----
-
-## Usage
-
-### GUI (recommended)
+**3. Run:**
 
 ```bash
 python main.py
 ```
 
-1. **Train** — enter episode count & hyperparameters → click *Start Training*.
-2. **Inspect** — switch between the *Win Rate*, *Reward*, *Q-Table Heatmap*, and *Q-Values* tabs.
-3. **Play** — click *New Game (Manual)* and use the action buttons.
-4. **Watch** — click *Watch AI Play* to see the trained agent in action.
+The Poker Table and Train & Analyse windows open side by side.  Train the agent
+first (recommended: 10,000+ episodes), then use Watch AI Play to observe the
+learned strategy in action.
 
-### Command-line demo
+---
 
-```bash
-python demo.py
+## Project Structure
+
 ```
-
-Runs the full validation suite: hand evaluator, pot splitting, outs analysis, training convergence, and demonstration games.
-
-### Programmatic
-
-```python
-from engine import PokerEnv
-from agent import QLearningAgent
-
-env = PokerEnv()
-agent = QLearningAgent(actions=env.actions, learning_rate=0.1,
-                       discount_factor=0.95, epsilon=0.2)
-agent.train(env, num_episodes=5000, verbose_every=1000)
-agent.save("my_agent.pkl")
-
-# Play one hand
-state = env.reset()
-done = False
-while not done:
-    action = agent.get_action(state, env.get_valid_actions(), training=False)
-    result = env.step(action)
-    state, reward, done, info = result
-
-print(f"Winner: {info['winner']}  |  Reward: ${reward:+.0f}")
+TexasHold'em/
+├── main.py            # Entry point
+├── config.py          # All constants and theme tokens
+├── environment.py     # Poker MDP engine + hand evaluator
+├── agent.py           # Q-Learning agent
+└── ui.py              # Two-window CustomTkinter GUI
 ```
 
 ---
 
-## Convergence to Nash Equilibrium
+<div align="right">
+  <a href="#texas-holdem----q-learning-lab">⬆ Back to top</a>
+</div>
 
-### Why This Sub-game Has a Clear Optimal Strategy
+<br/><br/>
 
-In this **fixed sub-game**, hero always starts with the same hand (8♥9♥) against a **stationary stochastic opponent**.  Because:
+---
+---
 
-1. The opponent's policy is **fixed** (not adapting).
-2. The state space is **finite** and **fully observable** to the agent.
-3. Transitions are **Markovian** (next state depends only on current state + action + random card).
+<br/>
 
-…the Q-Learning algorithm is **guaranteed to converge** to the optimal Q-function $Q^*(s, a)$ as $t \to \infty$, provided:
+<h1 id="-srpska-verzija">🇷🇸 Srpska Verzija</h1>
 
-- Every (state, action) pair is visited infinitely often (ensured by ε-greedy).
-- The learning rate satisfies the Robbins-Monro conditions (constant α works in practice for finite MDPs).
+## Pregled
 
-### What the Agent Learns
+**Reinforcement Learning agent za pojednostavljeni Heads-Up Texas Hold'em poker.**
 
-| Street | Optimal Action | Reasoning |
-|--------|---------------|-----------|
-| **Flop** | Call / Raise | 15 outs ≈ 54% equity.  Folding leaves money on the table. |
-| **Turn** (hit) | Raise | Made hand (flush or straight).  Extract value. |
-| **Turn** (miss) | Call | Still 15 outs with 1 card to come ≈ 30% equity.  Pot odds justify calling. |
-| **River** (hit) | Raise | Value bet the made hand. |
-| **River** (miss) | Fold | No equity remaining.  Minimise losses. |
-
-After 5 000+ episodes, the Q-values clearly reflect this pattern — `Q(flop, call) >> Q(flop, fold)` and `Q(river_miss, fold) > Q(river_miss, call)`.
-
-### Approximation of Nash Equilibrium
-
-Against a fixed opponent, the converged Q-policy is the **best response** to that opponent's strategy.  In two-player zero-sum games, a pair of best responses constitutes a **Nash Equilibrium**.  Since the opponent is fixed, the agent's converged policy is the NE *for this specific sub-game*.
-
-For a truly adaptive opponent, one would need **fictitious play**, **CFR (Counterfactual Regret Minimisation)**, or **Nash-Q** — extensions left as future work.
+Q-Learning agent uci optimalnu strategiju za post-flop igru sa fiksiranom
+pocetnom rukom (8&#9829; 9&#9829;) na flopu (J&#9829; Q&#9829; 2&#9827;) --
+kombinacija flush draw-a i open-ended straight draw-a sa priblizno 15 autova i
+~54% equity-ja do river-a.  Agent trenira kroz hiljade epizoda protiv
+stohastickog protivnika, gradi Q-tabelu i potom igra autonomno u GUI okruzenju
+sa dva prozora (CustomTkinter).
 
 ---
 
-## File Descriptions
+## Arhitektura
 
-| File | Role | Key Classes |
-|------|------|-------------|
-| [config.py](config.py) | **Config** — Constants & palette | All poker, RL, and theme constants |
-| [engine.py](engine.py) | **Model** — MDP environment | `Card`, `HandEvaluator`, `HandRank`, `GameState`, `OpponentPolicy`, `PokerEnv` |
-| [agent.py](agent.py) | **Controller** — RL agent | `QLearningAgent` |
-| [ui.py](ui.py) | **View** — CustomTkinter GUI | `CardWidget`, `PokerGUI` |
-| [main.py](main.py) | **Entry point** | — |
-| [demo.py](demo.py) | CLI validation suite | `test_hand_evaluator`, `test_training`, … |
-| [QUICKSTART.py](QUICKSTART.py) | Quick-start guide | — |
-| [requirements.txt](requirements.txt) | Dependencies | — |
+Projekat prati striktnu **Model-Controller-View** separaciju kroz pet fajlova
+bez cirkularnih zavisnosti.
+
+```
+main.py ──> ui.py (View) ──> agent.py (Controller) ──> environment.py (Model) ──> config.py
+```
+
+```mermaid
+graph TD
+    MAIN["main.py<br/><i>Ulazna tacka</i>"]
+    UI["ui.py<br/><i>View — GUI sa dva prozora</i>"]
+    AGENT["agent.py<br/><i>Controller — Q-Learning</i>"]
+    ENV["environment.py<br/><i>Model — Poker MDP</i>"]
+    CFG["config.py<br/><i>Konstante & Paleta</i>"]
+
+    MAIN --> UI
+    UI --> AGENT
+    UI --> ENV
+    AGENT --> ENV
+    ENV --> CFG
+    UI --> CFG
+
+    style MAIN fill:#1a472a,stroke:#ffd700,color:#fff
+    style UI fill:#2d5016,stroke:#ffd700,color:#fff
+    style AGENT fill:#1565c0,stroke:#ffd700,color:#fff
+    style ENV fill:#b71c1c,stroke:#ffd700,color:#fff
+    style CFG fill:#37474f,stroke:#ffd700,color:#fff
+```
+
+| Fajl | Uloga | Linije | Odgovornost |
+|------|-------|-------:|-------------|
+| `config.py` | Konstante | ~155 | Svi magicni brojevi, boje i podrazumevani hiperparametri |
+| `environment.py` | Model | ~720 | Reprezentacija karata, evaluator ruku (BGC), politika protivnika, MDP engine |
+| `agent.py` | Controller | ~335 | Q-tabela, epsilon-greedy selekcija, Bellman azuriranje, petlja treniranja |
+| `ui.py` | View | ~1470 | Poker sto, Treniraj & Analiziraj prozor, upravljanje tajmerima |
+| `main.py` | Ulaz | ~25 | Instancira `PokerGUI` i poziva `run()` |
 
 ---
 
-## Customisation
+## Jezgro Reinforcement Learning-a
 
-### Change starting hand
+### Petlja Stanje-Akcija-Nagrada
 
-In `engine.py`:
+Okruzenje je modelovano kao **Markov Decision Process (MDP)** gde agent (Hero)
+interaguje sa fiksiranim stohastickim protivnikom ugradjenim u samo
+okruzenje -- analogno Dileru u Blackjack-u.
 
-```python
-self.hero_cards = [Card("A", "s"), Card("K", "s")]
-self.flop = [Card("A", "h"), Card("K", "h"), Card("Q", "h")]
+```
+    ┌─────────────────────────────────────────────┐
+    │               OKRUZENJE                     │
+    │  ┌─────────┐  ┌──────────┐  ┌───────────┐  │
+    │  │ Spil &  │  │Protivnik │  │ Showdown  │  │
+    │  │ Board   │  │ Politika │  │ Evaluator │  │
+    │  └─────────┘  └──────────┘  └───────────┘  │
+    └──────────┬──────────────────────┬───────────┘
+               │  stanje(s)          │ nagrada(r)
+               ▼                     ▲
+    ┌──────────────────────────────────────────────┐
+    │               Q-LEARNING AGENT               │
+    │                                              │
+    │   Q(s,a) <-- Q(s,a) + a[r + g*max(Q) - Q]   │
+    │                                              │
+    │   politika: e-greedy nad Q-tabelom           │
+    └──────────────────┬───────────────────────────┘
+                       │  akcija(a)
+                       ▼
+                   OKRUZENJE
 ```
 
-### Adjust opponent aggression
+### Prostor Stanja
 
-```python
-self.opponent_policy = OpponentPolicy(aggression=0.5, fold_prob=0.15)
+Svako stanje je kodirano kao kompaktan string kljuc:
+
+```
+"<ulica>_<pot>_<hero_stack>"
 ```
 
-### Tune hyperparameters
+| Komponenta | Vrednosti | Primer |
+|------------|-----------|--------|
+| Ulica | `flop`, `turn`, `river` | `turn` |
+| Pot | Ukupan iznos u $ | `200` |
+| Hero Stack | Preostali cipovi u $ | `100` |
 
-```python
-agent = QLearningAgent(
-    actions=env.actions,
-    learning_rate=0.05,    # slower, more stable
-    discount_factor=0.99,  # values future rewards more
-    epsilon=0.10,          # less exploration
+Primer kljuca stanja: `"turn_200_100"` -- Turn karta je na stolu, pot
+sadrzi $200, a Hero ima $100.  Ova apstrakcija drzi Q-tabelu malom
+(~20-30 jedinstvenih stanja) uz ocuvanje sustinskih varijabli odlucivanja.
+
+### Prostor Akcija
+
+Pet atomicnih akcija je dostupno agentu na svakoj tacki odlucivanja:
+
+| Akcija | Kod | Efekat |
+|--------|-----|--------|
+| Fold | `fold` | Predaja -- gubitak svih ulozenih cipova |
+| Check / Call | `call` | Izjednacavanje sa ulogom protivnika (ili check ako je $0) |
+| Raise $50 | `raise_50` | Call + dodatnih $50 |
+| Raise $100 | `raise_100` | Call + dodatnih $100 |
+| All-In | `raise_150` | Gurni ceo preostali stack |
+
+Dostupnost akcija je dinamicka -- `raise_100` je validan samo kada Hero ima
+bar $100 preostalo.  Oznaka `raise_150` uvek znaci "gurni sve sto je ostalo",
+cak i ako je to manje od $150.
+
+### Signal Nagrade
+
+```
+R = hero_krajnji_stack - POCETNI_STACK
+```
+
+| Ishod | Tipicna Nagrada |
+|-------|-----------------|
+| Hero pobedjuje na showdown-u (bez raise-ova) | +$100 |
+| Hero pobedjuje nakon raise-a $50 | +$150 |
+| Hero fold-uje na flopu | -$0 (nije izgubio nista van pocetnog pot-a) |
+| Hero gubi na showdown-u (call-ovao $100) | -$100 |
+| Hero gubi all-in | -$150 |
+
+Nagrada je centrirana oko nule u odnosu na pocetni stack od $150,
+sto je cini direktno interpretabilnom kao profit ili gubitak.
+
+---
+
+## Arhitektura Atomicnog Poteza
+
+Engine forsira strogi protokol **jedne-akcije-po-pozivu**.  Nijedna funkcija
+nikada ne izvrsava vise od jedne akcije igraca.
+
+### Pravila Zavrsetka Ulice
+
+Logika zavrsetka se razlikuje po ulici kako bi se garantovao ispravan tok igre:
+
+```
+ FLOP / TURN                          RIVER
+ ──────────                          ─────
+ Protivnik otvara (check/raise)      Protivnik otvara (check/raise)
+       │                                   │
+ Hero igra (bilo koja ne-fold akcija) Hero igra
+       │                                   │
+ ULICA ZAVRSENA ODMAH                Ulozi izjednaceni?
+       │                              │          │
+ Dugme "Deal Next Card" se pojavi   Da           Ne
+       │                              │          │
+ Diler deli Turn / River            SHOWDOWN   Protivnik odgovara
+                                                  │
+                                              Ulozi izjednaceni?
+                                               │        │
+                                             Da         ...
+                                               │
+                                            SHOWDOWN
+```
+
+**Flop i Turn:** Hero-ova ne-fold akcija uvek zavrsava ulicu odmah.
+Diler mora da podeli sledecu community kartu pre bilo kakve dalje akcije.
+
+**River:** Primenjuje se standardno poker pravilo -- oba igraca moraju da
+odigraju i ulozi moraju biti jednaki (ili igrac mora biti all-in) pre
+prelaska na showdown.
+
+### Stanje Zavrsetka
+
+Kada se ulica zavrsi, engine zamrzava sve akcije:
+
+```
+  ┌─────────────────────────────────────────────────────────────┐
+  │                   STANJE STOLA: ZAVRSENO                    │
+  ├──────────┬────────────┬───────────┬─────────────────────────┤
+  │  Ulica   │  Hero Ulog │  Opp Ulog │  Status                │
+  ├──────────┼────────────┼───────────┼─────────────────────────┤
+  │  FLOP    │    $50     │    $0     │  street_settled = True  │
+  │          │            │           │  valid_actions = []     │
+  │          │            │           │  >> "Deal Next Card"    │
+  └──────────┴────────────┴───────────┴─────────────────────────┘
+
+  Nakon advance_street():
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │                  STANJE STOLA: TURN OTVOREN                 │
+  ├──────────┬────────────┬───────────┬─────────────────────────┤
+  │  Ulica   │  Hero Ulog │  Opp Ulog │  Status                │
+  ├──────────┼────────────┼───────────┼─────────────────────────┤
+  │  TURN    │    $0      │    $0     │  street_settled = False │
+  │          │            │           │  Protivnik otvara       │
+  └──────────┴────────────┴───────────┴─────────────────────────┘
+```
+
+Fleg `street_settled` deluje kao tvrda kapija:
+- `get_valid_actions()` vraca `[]` dok je fleg postavljen.
+- Nijedan igrac ne moze da igra dok pozivalac ne pozove `advance_street()`.
+- UI prikazuje dugme "Deal Next Card"; u Watch AI modu se auto-klikne.
+
+### River Showdown -- Logika Izjednacenih Uloga
+
+Na river-u, engine proverava tri uslova pre prelaska na showdown:
+
+```
+bets_matched = (
+    hero_odigrao AND opp_odigrao
+    AND (
+        hero_ulog_na_ulici == opp_ulog_na_ulici    -- normalan call
+        OR (hero_stack == 0
+            AND hero_ulog <= opp_ulog)              -- all-in za manje
+        OR (hero_stack == 0 AND opp_stack == 0)     -- oba all-in
+    )
 )
 ```
 
-Or adjust them directly in the GUI before clicking *Start Training*.
+Ovo pokriva granicne slucajeve poput igraca koji ide all-in za manje od
+protivnikovog uloga -- razlika u ulozima se prihvata i igra ide na showdown.
 
 ---
 
-## Troubleshooting
+## Q-Learning Implementacija
 
-| Issue | Solution |
-|-------|----------|
-| `ModuleNotFoundError: customtkinter` | `pip install customtkinter` |
-| `ModuleNotFoundError: tkinter` | `sudo apt-get install python3-tk` |
-| GUI blank / crash | Ensure `matplotlib` backend is `TkAgg` (set automatically) |
-| Agent not learning | Train ≥ 5 000 episodes; try α=0.05, ε=0.15 |
-| Slow training | 5 000 episodes ≈ 3 s; 50 000 ≈ 30 s |
+### Bellman Azuriranje
+
+```
+Q(s, a) <-- Q(s, a) + alpha * [ r + gamma * max Q(s', a') - Q(s, a) ]
+                                          a'
+```
+
+| Simbol | Ime | Podrazumevano | Uloga |
+|--------|-----|---------------|-------|
+| alpha | Stopa ucenja | 0.10 | Koliko brzo se Q-vrednosti azuriraju |
+| gamma | Faktor diskontovanja | 0.95 | Tezina buducih nagrada |
+| epsilon | Stopa eksploracije | 0.20 | Verovatnoca nasumicne akcije |
+
+### Petlja Treniranja (Jedna Epizoda)
+
+```
+ reset() --> stanje s0
+     │
+     ▼
+ ┌──────────────────────────────────┐
+ │  Dok nije kraj:                  │
+ │                                  │
+ │  ako current_player == protivnik:│
+ │      step_opponent()             │
+ │                                  │
+ │  ako current_player == hero:     │
+ │      a = epsilon_greedy(s)       │
+ │      step(a) --> s', r, kraj     │
+ │                                  │
+ │      ako street_settled:         │
+ │          advance_street()        │◄── Napreduj PRE Q-azuriranja
+ │          s' = stanje nove ulice  │    da Q(flop) vidi Q(turn)
+ │                                  │
+ │      Q(s,a) += alpha * [         │
+ │        r + gamma*max(Q(s'))      │
+ │        - Q(s,a)                  │
+ │      ]                           │
+ │      s = s'                      │
+ └──────────────────────────────────┘
+```
+
+Kritican detalj: kada Hero odigra na flopu ili turn-u i ulica se zavrsi,
+petlja treniranja poziva `advance_street()` **pre** Q-azuriranja.  Ovo
+osigurava da se `Q(flop_stanje, akcija)` azurira koristeci Q-vrednosti
+stanja **sledece ulice** (koje nosi stvarne naucene vrednosti), umesto
+mrtvog zavrsenog stanja gde je `max Q(s') = 0`.
+
+Bez ovoga, sve Q-vrednosti flopa i turn-a konvergiraju ka nuli i agent
+uci samo na river-u -- gubeci kriticnu stratesku dubinu.
+
+### Uvid u Konvergenciju
+
+Hero drzi 8&#9829; 9&#9829; na J&#9829; Q&#9829; 2&#9827; flopu:
+
+- **Flush draw:** 9 preostalih herc karata (9 autova)
+- **Straight draw:** Potreban T ili K (8 autova, minus preklapanja)
+- **Kombinovani jedinstveni autovi:** ~15
+- **Equity do poboljsanja do river-a:** ~54%
+
+Agent bi trebalo da konvergira ka favorizovanju **call**-a i umerenih
+**raise**-ova na ranim ulicama, gradeci pot equity sa draw-om, i igrajuci
+agresivno na river-u kada se ruka kompletira.
 
 ---
 
-## Expected Results
+## Engine za Rangiranje Ruku
 
-| Episodes | Win Rate | Avg Reward | Q-Table States |
-|----------|----------|------------|----------------|
-| 1 000 | 40–50 % | $0–15 | 5–10 |
-| 5 000 | 45–55 % | $10–25 | 10–20 |
-| 20 000 | 50–60 % | $15–30 | 15–25 |
+Evaluator prati **BGC (British Gambling Commission) Texas Hold'em**
+hijerarhiju, implementiran kao best-of-7 kombinatorni evaluator:
+
+| Rang | Ruka | Primer |
+|-----:|------|--------|
+| 10 | Royal Flush | A&#9829; K&#9829; Q&#9829; J&#9829; T&#9829; |
+| 9 | Straight Flush | 9&#9827; 8&#9827; 7&#9827; 6&#9827; 5&#9827; |
+| 8 | Poker (Four of a Kind) | K K K K 3 |
+| 7 | Full House | Q Q Q 7 7 |
+| 6 | Flush | A&#9830; T&#9830; 8&#9830; 5&#9830; 2&#9830; |
+| 5 | Kenta (Straight) | T 9 8 7 6 |
+| 4 | Tris (Three of a Kind) | 8 8 8 A J |
+| 3 | Dva Para (Two Pair) | A A 9 9 K |
+| 2 | Par (One Pair) | J J A Q 4 |
+| 1 | Najvisa Karta (High Card) | A K 9 7 3 |
+
+Dinamika Keca: visok u `A K Q J T`, nizak u `5 4 3 2 A` (tockic).
+
+Resavanje izjednacenja: kada su rangovi jednaki, poredjenje kicker-a koristi
+uredjene tuple za razresavanje.  Na egzaktnim izjednacenjima pot se deli sa
+neparnim cipom koji ide Hero-u (igrac levo od dilera, po BGC pravilima).
 
 ---
 
-## License
+## Politika Protivnika
 
-MIT — see individual file headers.
+Protivnik je **fiksirana stohasticka politika** ugradjena u okruzenje --
+nije agent koji uci.  On je deo dinamike okruzenja, slicno Dileru u
+Blackjack-u.
+
+| Parametar | Podrazumevano | Ponasanje |
+|-----------|---------------|-----------|
+| `aggression` | 0.30 | Verovatnoca raise-ovanja $100 kada je moguce |
+| `fold_prob` | 0.10 | Verovatnoca fold-ovanja kada je suocen sa ulogom |
+
+Prioritet odlucivanja: Provera fold-a --> Provera raise-a --> Podrazumevani Call.
 
 ---
 
-*Built as a reinforcement-learning research prototype.  Not intended for real-money gambling.*
+## Pregled GUI-ja
+
+Interfejs sa dva prozora (CustomTkinter) i tamnom temom:
+
+**Poker Sto** (primarni prozor):
+- Widget-i karata sa simbolima u boji masova
+- AI Thought Process panel u realnom vremenu (bar chart Q-vrednosti)
+- Dnevnik akcija koji prati svaki potez
+- Tri moda: Rucna Igra, Gledaj AI, Sledeca Ruka
+
+**Treniraj & Analiziraj** (sekundarni prozor):
+- Kontrole hiperparametara (alpha, gamma, epsilon, epizode)
+- Progress bar treniranja
+- Cetiri analiticki tab-a: Win Rate, Istorija Nagrada, Q-Table Heatmap, Q-Table Grid
+
+Upravljanje tajmerima koristi praceni `_schedule()` / `_cancel_pending()` sistem
+za sprecavanje ghost callback-ova i race condition-a izmedju UI dogadjaja.
+
+---
+
+## Pokretanje
+
+**1. Instalirajte zavisnosti:**
+
+```bash
+pip install -r requirements.txt
+```
+
+**2. Klonirajte i udjite u projekat:**
+
+```bash
+git clone <repository-url>
+cd TexasHoldEm
+```
+
+**3. Pokrenite:**
+
+```bash
+python main.py
+```
+
+Poker Sto i Treniraj & Analiziraj prozori se otvaraju jedan pored drugog.
+Prvo istrenirajte agenta (preporuka: 10.000+ epizoda), zatim koristite
+Watch AI Play da posmatrate naucenu strategiju u akciji.
+
+---
+
+## Struktura Projekta
+
+```
+TexasHold'em/
+├── main.py            # Ulazna tacka
+├── config.py          # Sve konstante i tokeni tema
+├── environment.py     # Poker MDP engine + evaluator ruku
+├── agent.py           # Q-Learning agent
+└── ui.py              # GUI sa dva prozora (CustomTkinter)
+```
+
+---
+
+<div align="right">
+  <a href="#texas-holdem----q-learning-lab">⬆ Nazad na vrh</a>
+</div>
+
+<br/>
+
+---
+
+*Built with Python 3.13, CustomTkinter, Matplotlib, NumPy.*

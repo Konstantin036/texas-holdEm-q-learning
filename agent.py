@@ -46,7 +46,7 @@ from config import (
     DEFAULT_LEARNING_RATE,
     DEFAULT_VERBOSE_EVERY,
 )
-from engine import GameState, PokerEnv, StepResult
+from environment import GameState, PokerEnv, StepResult
 
 
 # ============================================================================
@@ -175,32 +175,54 @@ class QLearningAgent:
         env: PokerEnv,
         verbose: bool = False,
     ) -> Tuple[float, bool]:
-        """Run one training episode and return ``(total_reward, won)``."""
+        """Run one training episode and return ``(total_reward, won)``.
+
+        Uses the turn-toggle protocol:
+        * When ``env.current_player == "opponent"`` → call ``env.step_opponent()``.
+        * When ``env.current_player == "hero"``     → pick an action and call ``env.step(action)``.
+        * Each call executes exactly ONE action and returns.
+        """
         state: GameState = env.reset()
         total_reward: float = 0.0
-        done: bool = env.done  # may already be True if opponent folded pre-action
+        done: bool = False
         info: Dict[str, Any] = {}
-        if done:
-            won = env.winner == "hero"
-            self.episode_rewards.append(total_reward)
-            self.episode_wins.append(1 if won else 0)
-            return total_reward, won
 
         while not done:
-            valid = env.get_valid_actions()
-            action = self.get_action(state, valid, training=True)
+            # If the street just settled, advance to deal the next card
+            if env.street_settled:
+                env.advance_street()
+                state = env._get_state()
+                continue
 
-            if verbose:
-                print(f"  [{state.street}] action={action}")
+            if env.current_player == "opponent":
+                result: StepResult = env.step_opponent()
+                _, reward, done, info = result
+                total_reward += reward
+                state = result.next_state
+            else:
+                valid = env.get_valid_actions()
+                action = self.get_action(state, valid, training=True)
 
-            result: StepResult = env.step(action)
-            next_state, reward, done, info = result
+                if verbose:
+                    print(f"  [{state.street}] action={action}")
 
-            self.update(
-                state, action, reward, next_state, done, env.get_valid_actions()
-            )
-            state = next_state
-            total_reward += reward
+                result = env.step(action)
+                next_state, reward, done, info = result
+
+                # On flop/turn the street auto-settles after hero's
+                # non-fold action.  Advance immediately so the Q-update
+                # sees the *next street's* state (which has real
+                # Q-values), not the dead settled state.
+                if not done and env.street_settled:
+                    env.advance_street()
+                    next_state = env._get_state()
+
+                self.update(
+                    state, action, reward, next_state, done,
+                    env.get_valid_actions(),
+                )
+                state = next_state
+                total_reward += reward
 
         won = info.get("winner") == "hero"
         self.episode_rewards.append(total_reward)

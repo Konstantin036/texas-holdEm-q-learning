@@ -7,7 +7,6 @@ Launches the Texas Hold'em Q-Learning Lab GUI.
 Usage::
 
     python main.py          # start the GUI
-    python demo.py          # run the CLI validation suite
 """
 
 from __future__ import annotations

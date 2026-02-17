@@ -60,7 +60,7 @@ INITIAL_POT: Final[int] = 100
 OPPONENT_AGGRESSION: Final[float] = 0.3
 OPPONENT_FOLD_PROB: Final[float] = 0.10
 
-ACTIONS: Final[List[str]] = ["fold", "call", "raise_100", "raise_150"]
+ACTIONS: Final[List[str]] = ["fold", "call", "raise_50", "raise_100", "raise_150"]
 
 
 # ============================================================================
@@ -133,6 +133,7 @@ CMAP_STOPS: Final[List[str]] = [
 ACTION_DISPLAY: Final[Dict[str, tuple]] = {
     "fold":      ("Fold",       "#ef5350"),
     "call":      ("Call",       "#66bb6a"),
+    "raise_50":  ("Raise $50",  "#29b6f6"),
     "raise_100": ("Raise $100", "#ffa726"),
     "raise_150": ("All-In",     "#ab47bc"),
 }
@@ -143,10 +144,10 @@ WINDOW_GEOMETRY: Final[str] = "1400x900"
 WINDOW_MIN_SIZE: Final[tuple] = (1200, 800)
 
 # -- Multi-window layout --
-TABLE_WINDOW_TITLE: Final[str] = "♠ ♥  Poker Table  ♦ ♣"
+TABLE_WINDOW_TITLE: Final[str] = "Poker Table"
 TABLE_WINDOW_GEOMETRY: Final[str] = "1060x920"
 TABLE_WINDOW_MIN_SIZE: Final[tuple] = (900, 800)
 
-ANALYSIS_WINDOW_TITLE: Final[str] = "📊  Train and Analyse"
+ANALYSIS_WINDOW_TITLE: Final[str] = "Train and Analyse"
 ANALYSIS_WINDOW_GEOMETRY: Final[str] = "680x920"
 ANALYSIS_WINDOW_MIN_SIZE: Final[tuple] = (550, 700)
