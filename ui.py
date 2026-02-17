@@ -14,8 +14,10 @@ The UI never lets the environment execute more than ONE action per call.
 * ``env.step_opponent()`` -- opponent acts once, returns.
 * ``env.step(action)``    -- hero acts once, returns.
 
-When both players' bets match on a street (``info["street_settled"]``),
-the game STOPS and waits for the **"Deal Next Card"** button:
+When both players have acted and bets match on a street
+(``info["street_settled"]``), the game STOPS and waits for the
+**"Deal Next Card"** button (flop/turn) or proceeds directly to
+showdown (river):
 
 * In **Manual** mode the player clicks it.
 * In **Watch AI** mode the UI auto-clicks it after a delay.
@@ -686,6 +688,7 @@ class PokerGUI:
         if self.env.done:
             return
         qvals = self.agent.get_q_values(self.current_state)
+        valid = set(self.env.get_valid_actions())
         self.thought_state_label.configure(
             text=f"State: {self.current_state.state_key}",
         )
@@ -696,14 +699,23 @@ class PokerGUI:
                 w["badge"].configure(text="")
             return
 
-        all_q = [qvals.get(a, 0.0) for a in self.env.actions]
-        best_a = max(qvals, key=qvals.get)  # type: ignore[arg-type]
-        q_min = min(all_q)
-        q_max = max(all_q)
+        # Only consider valid actions for best-action marking
+        valid_q = {a: q for a, q in qvals.items() if a in valid}
+        best_a = max(valid_q, key=valid_q.get) if valid_q else None  # type: ignore[arg-type]
+
+        all_q = [qvals.get(a, 0.0) for a in self.env.actions if a in valid]
+        q_min = min(all_q) if all_q else 0.0
+        q_max = max(all_q) if all_q else 0.0
         q_range = q_max - q_min if q_max != q_min else 1.0
 
         for action in self.env.actions:
             w = self._thought_bar_widgets[action]
+            if action not in valid:
+                # Grey out invalid actions
+                w["bar"].set(0)
+                w["val"].configure(text="n/a", text_color="#546e7a")
+                w["badge"].configure(text="")
+                continue
             q = qvals.get(action, 0.0)
             norm = max(0.02, (q - q_min) / q_range)
             w["bar"].set(norm)
@@ -786,16 +798,32 @@ class PokerGUI:
             "Dealer", "deal", self.env.street, bet_amount=0, pot=self.env.pot,
         )
 
-        # Opponent opens the new street
-        self.msg_label.configure(
-            text="New card dealt -- Opponent is acting...",
-            text_color="#80cbc4",
-        )
-        self._disable_actions()
+        label = "AI" if self._next_hand_mode == "ai" else "You"
         self._processing = False
-        self._schedule(1000, lambda: self._do_opponent_turn(
-            "AI" if self._next_hand_mode == "ai" else "You",
-        ))
+
+        # Whoever did NOT act last on the previous street opens this one.
+        if self.env.current_player == "opponent":
+            self.msg_label.configure(
+                text="New card dealt -- Opponent is acting...",
+                text_color="#80cbc4",
+            )
+            self._disable_actions()
+            self._schedule(1000, lambda: self._do_opponent_turn(label))
+        else:
+            # Hero opens the new street
+            if self._next_hand_mode == "ai":
+                self.msg_label.configure(
+                    text="New card dealt -- AI is thinking...",
+                    text_color="#80cbc4",
+                )
+                self._disable_actions()
+                self._schedule(1000, self._ai_step)
+            else:
+                self.msg_label.configure(
+                    text="New card dealt -- Your turn.",
+                    text_color="#ffcc80",
+                )
+                self._enable_actions(self.env.get_valid_actions())
 
     # ================================================================
     # Action log

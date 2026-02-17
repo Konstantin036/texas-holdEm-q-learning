@@ -50,9 +50,12 @@ HAND_NAMES: Final[Dict[int, str]] = {
 # 2. MDP / Environment Defaults
 # ============================================================================
 
-# Fixed scenario (post-flop heads-up)
+# Default scenario (post-flop heads-up)
 HERO_CARDS: Final[List[str]] = ["8h", "9h"]       # 8♥ 9♥
 FLOP_CARDS: Final[List[str]] = ["Jh", "Qh", "2c"]  # J♥ Q♥ 2♣
+
+# When True, hero cards and flop are randomised every hand during training
+STOCHASTIC: Final[bool] = True
 
 INITIAL_STACK: Final[int] = 150
 INITIAL_POT: Final[int] = 100

@@ -22,15 +22,15 @@ Atomic-Action + Manual Street Advance
 Each call to ``step()`` / ``step_opponent()`` executes **exactly one**
 player action and returns.
 
-* **Flop / Turn:** hero's non-fold action **immediately** settles the
-  street.  The opponent does NOT respond -- the Dealer must deal the
-  next card first.
-* **River:** the standard bets-matched rule applies (both players
-  must act and bets must be equal before showdown).
+A street settles when **both** players have acted **and** their
+per-street bets are equal (or a player is all-in).  This rule
+applies uniformly on the Flop, Turn, and River.
 
-The engine sets ``street_settled = True`` but does **NOT** deal the
-next card.  The caller must explicitly call ``advance_street()`` to
-deal the Turn or River.  This makes the UI responsible for pacing.
+* **Flop / Turn:** when bets match the engine sets
+  ``street_settled = True`` but does **NOT** deal the next card.
+  The caller must explicitly call ``advance_street()`` to deal
+  the Turn or River.  This makes the UI responsible for pacing.
+* **River:** when bets match the engine goes straight to showdown.
 
 Public API
 ----------
@@ -68,6 +68,7 @@ from config import (
     OPPONENT_AGGRESSION,
     OPPONENT_FOLD_PROB,
     RANKS,
+    STOCHASTIC,
     SUIT_SYMBOLS,
     SUITS,
 )
@@ -350,17 +351,20 @@ class PokerEnv:
     --------
     * ``step(action)``     -- hero takes **exactly one** action, returns.
     * ``step_opponent()``  -- opponent takes **exactly one** action, returns.
-    * **Flop / Turn:** hero's non-fold action **always** settles the
-      street immediately.  The opponent does NOT get to respond.
-      The result ``info`` contains ``"street_settled": True``.
-    * The caller must invoke ``advance_street()`` to deal Turn / River.
-    * **River:** standard rule -- both players must act and bets must
-      match before the hand goes to showdown.
+    * A street settles when **both** players have acted and bets are
+      equal (or a player is all-in).  This rule is uniform across
+      Flop, Turn, and River.
+    * **Flop / Turn:** when settled, ``info["street_settled"] = True``.
+      The caller must invoke ``advance_street()`` to deal Turn / River.
+    * **River:** when settled, the engine proceeds directly to showdown.
     """
 
     ACTIONS: Final[List[str]] = ACTIONS
 
-    def __init__(self) -> None:
+    def __init__(self, stochastic: bool = STOCHASTIC) -> None:
+        self.stochastic = stochastic
+
+        # Default (fixed) scenario -- overwritten each reset when stochastic
         self.hero_cards: List[Card] = [Card("8", "h"), Card("9", "h")]
         self.flop: List[Card] = [
             Card("J", "h"), Card("Q", "h"), Card("2", "c"),
@@ -391,6 +395,9 @@ class PokerEnv:
         # Turn toggle
         self.current_player: str = "opponent"
 
+        # Tracks who acted last -- used by advance_street to alternate openers
+        self.last_actor: str = "hero"
+
         # Street-settled flag -- set when bets match, cleared by advance_street
         self.street_settled: bool = False
 
@@ -418,15 +425,26 @@ class PokerEnv:
     # -- public API ----------------------------------------------------------
 
     def reset(self) -> GameState:
-        """Start a new hand.  ``current_player`` begins as ``"opponent"``."""
-        self.deck = [
-            Card(r, s)
-            for r in Card.RANKS
-            for s in Card.SUITS
-            if Card(r, s) not in self.hero_cards
-            and Card(r, s) not in self.flop
-        ]
-        random.shuffle(self.deck)
+        """Start a new hand.  ``current_player`` begins as ``"opponent"``.
+
+        When ``stochastic`` is enabled the hero cards and flop are
+        re-dealt randomly from a fresh 52-card deck each hand.
+        """
+        full_deck = [Card(r, s) for r in Card.RANKS for s in Card.SUITS]
+        random.shuffle(full_deck)
+
+        if self.stochastic:
+            # Deal random hero cards and flop from the shuffled deck
+            self.hero_cards = [full_deck.pop(), full_deck.pop()]
+            self.flop = [full_deck.pop(), full_deck.pop(), full_deck.pop()]
+            self.deck = full_deck            # remaining 47 cards
+        else:
+            # Fixed scenario -- remove known cards from the deck
+            self.deck = [
+                c for c in full_deck
+                if c not in self.hero_cards and c not in self.flop
+            ]
+
         self.opponent_cards = [self.deck.pop(), self.deck.pop()]
 
         self.turn = None
@@ -444,6 +462,7 @@ class PokerEnv:
         self.done = False
         self.winner = None
         self.current_player = "opponent"
+        self.last_actor = "hero"  # so opponent opens the flop
         self.street_settled = False
         return self._get_state()
 
@@ -497,7 +516,9 @@ class PokerEnv:
         self.opp_street_bet = 0
         self.hero_acted = False
         self.opp_acted = False
-        self.current_player = "opponent"
+        # The player who acted LAST before the settle sits out;
+        # the OTHER player opens the new street.
+        self.current_player = "hero" if self.last_actor == "opponent" else "opponent"
         return True
 
     # ================================================================
@@ -535,6 +556,7 @@ class PokerEnv:
             bet = self._opp_puts(to_call + 100)
 
         self.opp_acted = True
+        self.last_actor = "opponent"
 
         # Street settles when BOTH players have acted AND either:
         #   (a) bets are exactly equal (normal call / check-check), OR
@@ -576,8 +598,9 @@ class PokerEnv:
     def step(self, action: str) -> StepResult:
         """Hero acts once.  Returns immediately.
 
-        On flop/turn any non-fold action settles the street at once.
-        On river the standard bets-matched rule applies.
+        A street settles when both players have acted and bets match.
+        On flop/turn this sets ``street_settled = True`` (caller must
+        deal).  On the river it proceeds directly to showdown.
         """
         if self.done:
             return StepResult(self._get_state(), 0.0, True, {"who": "hero"})
@@ -610,25 +633,16 @@ class PokerEnv:
             hero_bet = self._hero_puts(self.hero_stack)
 
         self.hero_acted = True
+        self.last_actor = "hero"
 
         info: Dict[str, Any] = {
             "who": "hero", "action": action, "bet": hero_bet,
         }
 
         # ----------------------------------------------------------
-        # Flop / Turn:  Hero's non-fold action ALWAYS settles the
-        # street immediately.  The Dealer must deal the next card
-        # before the Opponent can act again.
-        # ----------------------------------------------------------
-        if self.street in ("flop", "turn"):
-            self.street_settled = True
-            self.current_player = "opponent"
-            info["street_settled"] = True
-            return StepResult(self._get_state(), 0.0, False, info)
-
-        # ----------------------------------------------------------
-        # River:  Standard settle -- both must act, bets must match,
-        # then proceed to showdown.
+        # Uniform bets-matched rule (all streets):
+        # Street settles when BOTH players have acted AND bets are
+        # equal (or a player is all-in).
         # ----------------------------------------------------------
         bets_matched = (
             self.hero_acted
@@ -642,9 +656,15 @@ class PokerEnv:
         )
 
         if bets_matched:
-            return self._showdown(info_extra=info)
+            if self.street == "river":
+                return self._showdown(info_extra=info)
+            # Flop / Turn settled -- wait for advance_street()
+            self.street_settled = True
+            self.current_player = "opponent"
+            info["street_settled"] = True
+            return StepResult(self._get_state(), 0.0, False, info)
 
-        # Hero raised on river -> opponent must respond
+        # Not settled -> opponent must respond
         self.current_player = "opponent"
         return StepResult(self._get_state(), 0.0, False, info)
 

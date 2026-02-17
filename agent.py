@@ -209,10 +209,10 @@ class QLearningAgent:
                 result = env.step(action)
                 next_state, reward, done, info = result
 
-                # On flop/turn the street auto-settles after hero's
-                # non-fold action.  Advance immediately so the Q-update
-                # sees the *next street's* state (which has real
-                # Q-values), not the dead settled state.
+                # When bets match on flop/turn the street settles.
+                # Advance immediately so the Q-update sees the *next
+                # street's* state (which has real Q-values), not the
+                # dead settled state.
                 if not done and env.street_settled:
                     env.advance_street()
                     next_state = env._get_state()
