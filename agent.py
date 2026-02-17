@@ -177,15 +177,22 @@ class QLearningAgent:
     ) -> Tuple[float, bool]:
         """Run one training episode and return ``(total_reward, won)``.
 
-        Uses the turn-toggle protocol:
-        * When ``env.current_player == "opponent"`` → call ``env.step_opponent()``.
-        * When ``env.current_player == "hero"``     → pick an action and call ``env.step(action)``.
-        * Each call executes exactly ONE action and returns.
+        Uses **Monte-Carlo-style backward updates**: the episode is
+        played out first, collecting a trajectory of ``(state, action,
+        next_state)`` tuples.  After the terminal reward is known,
+        every hero action is credited using a discounted return
+        that propagates backward from the final reward in a single
+        pass.  This lets early-street Q-values converge in one
+        episode instead of requiring hundreds of episodes for the
+        Bellman chain to propagate.
         """
         state: GameState = env.reset()
         total_reward: float = 0.0
         done: bool = False
         info: Dict[str, Any] = {}
+
+        # Collect trajectory: list of (state, action, next_state)
+        trajectory: List[Tuple[GameState, str, GameState]] = []
 
         while not done:
             # If the street just settled, advance to deal the next card
@@ -210,19 +217,27 @@ class QLearningAgent:
                 next_state, reward, done, info = result
 
                 # When bets match on flop/turn the street settles.
-                # Advance immediately so the Q-update sees the *next
-                # street's* state (which has real Q-values), not the
-                # dead settled state.
+                # Advance immediately so the next_state points to the
+                # new street (which has meaningful Q-values).
                 if not done and env.street_settled:
                     env.advance_street()
                     next_state = env._get_state()
 
-                self.update(
-                    state, action, reward, next_state, done,
-                    env.get_valid_actions(),
-                )
+                trajectory.append((state, action, next_state))
                 state = next_state
                 total_reward += reward
+
+        # -- Backward pass: propagate terminal reward through trajectory --
+        # Walk the trajectory in reverse.  The last transition gets
+        # the actual terminal reward; earlier ones get discounted
+        # returns:  G_t = γ * G_{t+1}  (intermediate rewards are 0).
+        g = total_reward
+        for state_t, action_t, next_state_t in reversed(trajectory):
+            self.update(
+                state_t, action_t, g, next_state_t, True,
+                [],                 # done=True forces max_next_q=0
+            )
+            g = self.discount_factor * g
 
         won = info.get("winner") == "hero"
         self.episode_rewards.append(total_reward)
