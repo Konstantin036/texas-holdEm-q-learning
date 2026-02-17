@@ -378,17 +378,17 @@ prevent ghost callbacks and race conditions between UI events.
 
 ## Setup & Run
 
-**1. Install dependencies:**
-
-```bash
-pip install -r requirements.txt
-```
-
-**2. Clone and enter the project:**
+**1. Clone and enter the project:**
 
 ```bash
 git clone <repository-url>
 cd TexasHoldEm
+```
+
+**2. Install dependencies:**
+
+```bash
+pip install -r requirements.txt
 ```
 
 **3. Run:**
@@ -785,17 +785,17 @@ za sprecavanje ghost callback-ova i race condition-a izmedju UI dogadjaja.
 
 ## Pokretanje
 
-**1. Instalirajte zavisnosti:**
-
-```bash
-pip install -r requirements.txt
-```
-
-**2. Klonirajte i udjite u projekat:**
+**1. Klonirajte i udjite u projekat:**
 
 ```bash
 git clone <repository-url>
 cd TexasHoldEm
+```
+
+**2. Instalirajte zavisnosti:**
+
+```bash
+pip install -r requirements.txt
 ```
 
 **3. Pokrenite:**
