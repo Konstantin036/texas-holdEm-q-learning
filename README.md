@@ -27,12 +27,17 @@
 
 A Reinforcement Learning agent for simplified Heads-Up Texas Hold'em poker.
 
-A Q-Learning agent learns the optimal post-flop strategy for a fixed hero hand
-(8&#9829; 9&#9829;) on a flop of (J&#9829; Q&#9829; 2&#9827;) -- a combined
-flush draw and open-ended straight draw with approximately 15 outs and ~54%
-equity to improve by the river.  The agent trains over thousands of episodes
-against a stochastic opponent, builds a Q-table, and then plays autonomously
-inside a two-window CustomTkinter GUI.
+A Q-Learning agent learns an optimal post-flop betting strategy by training
+over thousands of episodes against a stochastic opponent.  In **stochastic
+mode** (the default) hero cards and the flop are randomised every hand, so
+the agent learns an average-case strategy across all possible hands rather
+than memorising a single scenario.  A fixed-hand mode
+(8&#9829; 9&#9829; on J&#9829; Q&#9829; 2&#9827;) is also available via
+the `STOCHASTIC` flag in `config.py`.
+
+The agent uses a **Monte Carlo backward pass** to credit every action in an
+episode with a discounted return, enabling fast convergence of early-street
+Q-values.  It then plays autonomously inside a two-window CustomTkinter GUI.
 
 ---
 
@@ -123,7 +128,12 @@ Each state is encoded as a compact string key:
 
 Example state key: `"turn_200_100"` -- the Turn card is on the board, the pot
 holds $200, and Hero has $100 remaining.  This abstraction keeps the Q-table
-small (~20-30 unique states) while preserving the essential decision variables.
+small (~20-40 unique states) while preserving the essential decision variables.
+
+> **Note:** The state key intentionally excludes card information.  In
+> stochastic mode the agent learns a single strategy averaged across all
+> possible hands.  To make the agent hand-aware, a hand-strength bucket
+> (e.g. weak/mid/strong) can be appended to the key.
 
 ### Action Space
 
@@ -167,33 +177,33 @@ ever executes more than one player action.
 
 ### Street Settlement Rules
 
-The settlement logic differs by street to guarantee correct game flow:
+The settlement logic is **uniform across all streets** (Flop, Turn, and River):
+a street settles when **both** players have acted **and** their per-street bets
+are equal (or a player is all-in).
 
 ```
- FLOP / TURN                          RIVER
- ──────────                          ─────
- Opponent opens (check/raise)        Opponent opens (check/raise)
-       │                                   │
- Hero acts (any non-fold action)     Hero acts
-       │                                   │
- STREET SETTLED IMMEDIATELY          Bets matched?
-       │                              │          │
- "Deal Next Card" button appears    Yes          No
-       │                              │          │
- Dealer deals Turn / River          SHOWDOWN   Opponent responds
-                                                  │
-                                              Bets matched?
-                                               │        │
-                                             Yes        ...
-                                               │
-                                            SHOWDOWN
+ ALL STREETS (FLOP / TURN / RIVER)
+ ─────────────────────────────────
+ Player A opens (check/raise)
+       │
+ Player B responds (call/raise/fold)
+       │
+ Bets matched?  ──No──>  Continue betting
+       │
+      Yes
+       │
+  ┌────┴────┐
+  │ Flop or │          River
+  │  Turn   │            │
+  │         │        SHOWDOWN
+  "Deal Next Card"
+  button appears
 ```
 
-**Flop and Turn:** Hero's non-fold action always settles the street immediately.
-The Dealer must deal the next community card before any further action occurs.
-
-**River:** The standard poker rule applies -- both players must act and bets must
-be equal (or a player must be all-in) before proceeding to showdown.
+**Street opener alternation:** the engine tracks who acted last
+(`last_actor`).  After a street settles, `advance_street()` sets the
+opener to the **opposite** player, preventing the same player from
+acting last on one street and first on the next.
 
 ### Settled Board State
 
@@ -263,13 +273,15 @@ Q(s, a) <-- Q(s, a) + alpha * [ r + gamma * max Q(s', a') - Q(s, a) ]
 | gamma | Discount Factor | 0.95 | Weight of future rewards |
 | epsilon | Exploration Rate | 0.20 | Probability of random action |
 
-### Training Loop (One Episode)
+### Training Loop (One Episode) -- Monte Carlo Backward Pass
 
 ```
  reset() --> state s0
      │
      ▼
  ┌──────────────────────────────────┐
+ │  Phase 1: PLAY the episode       │
+ │  ─────────────────────────────── │
  │  While not done:                 │
  │                                  │
  │  if current_player == opponent:  │
@@ -280,38 +292,56 @@ Q(s, a) <-- Q(s, a) + alpha * [ r + gamma * max Q(s', a') - Q(s, a) ]
  │      step(a) --> s', r, done     │
  │                                  │
  │      if street_settled:          │
- │          advance_street()        │◄── Advance BEFORE Q-update
- │          s' = new street state   │    so Q(flop) sees Q(turn)
+ │          advance_street()        │
+ │          s' = new street state   │
  │                                  │
- │      Q(s,a) += alpha * [         │
- │        r + gamma*max(Q(s'))      │
- │        - Q(s,a)                  │
- │      ]                           │
+ │      trajectory.append(s, a, s') │◄── Collect, don't update yet
  │      s = s'                      │
+ └──────────────────────────────────┘
+     │
+     ▼  terminal reward R is known
+ ┌──────────────────────────────────┐
+ │  Phase 2: BACKWARD PASS          │
+ │  ─────────────────────────────── │
+ │  G = R  (total episode reward)   │
+ │                                  │
+ │  for (s, a, s') in REVERSED:     │
+ │      Q(s,a) += alpha*(G - Q(s,a))│
+ │      G = gamma * G               │◄── Discount for earlier steps
  └──────────────────────────────────┘
 ```
 
-The critical detail: when Hero acts on the flop or turn and the street settles,
-the training loop calls `advance_street()` **before** the Q-update.  This
-ensures that `Q(flop_state, action)` is updated using the Q-values of the
-**next street's** state (which carries real learned values), rather than the
-dead settled state where `max Q(s') = 0`.
+Instead of updating Q-values inline (one-step Q-learning), the training loop
+collects the full trajectory first, then walks it **backward**.  The terminal
+reward is applied to the last action at full value, and each earlier action
+receives a discounted version:
 
-Without this, all flop and turn Q-values converge to zero and the agent only
-learns on the river -- losing critical strategic depth.
+| Step | Return received |
+|------|----------------|
+| River action | $G = R$ |
+| Turn action | $G = \gamma \cdot R$ |
+| Flop action | $G = \gamma^2 \cdot R$ |
+
+This lets **every state learn from the outcome in a single episode**, rather
+than waiting hundreds of episodes for the Bellman chain to propagate backward.
 
 ### Convergence Insight
 
-Hero holds 8&#9829; 9&#9829; on a J&#9829; Q&#9829; 2&#9827; flop:
+In **stochastic mode** the agent sees every possible hand.  Since the state
+key omits card information, Q-values represent the average profitability of
+each action across all hands.  The agent converges to a cautious baseline
+strategy (favouring calls) because raising is profitable with strong hands
+but costly with weak ones -- the average favours flat calling.
+
+In **fixed mode** (8&#9829; 9&#9829; on J&#9829; Q&#9829; 2&#9827;):
 
 - **Flush draw:** 9 remaining hearts (9 outs)
 - **Straight draw:** Needs T or K (8 outs, minus overlaps)
 - **Combined unique outs:** ~15
 - **Equity to improve by river:** ~54%
 
-The agent should converge to favouring **call** and moderate **raises** on
-early streets, building pot equity with the draw, and playing aggressively on
-the river when the hand completes.
+The agent converges to favouring **call** and moderate **raises** on early
+streets, building pot equity with the draw.
 
 ---
 
@@ -362,7 +392,9 @@ Two-window CustomTkinter interface with dark theme:
 
 **Poker Table** (primary window):
 - Card widgets with suit-coloured symbols
-- Real-time AI Thought Process panel (Q-value bar chart)
+- Real-time AI Thought Process panel (Q-value bar chart) -- invalid actions
+  are greyed out as `n/a`, and the ★ best-action marker only considers
+  actions that are actually available in the current state
 - Action log tracking every move
 - Three modes: Manual Play, Watch AI, Next Hand
 
@@ -433,12 +465,18 @@ TexasHold'em/
 
 **Reinforcement Learning agent za pojednostavljeni Heads-Up Texas Hold'em poker.**
 
-Q-Learning agent uci optimalnu strategiju za post-flop igru sa fiksiranom
-pocetnom rukom (8&#9829; 9&#9829;) na flopu (J&#9829; Q&#9829; 2&#9827;) --
-kombinacija flush draw-a i open-ended straight draw-a sa priblizno 15 autova i
-~54% equity-ja do river-a.  Agent trenira kroz hiljade epizoda protiv
-stohastickog protivnika, gradi Q-tabelu i potom igra autonomno u GUI okruzenju
-sa dva prozora (CustomTkinter).
+Q-Learning agent uci optimalnu post-flop strategiju klađenja treningom
+kroz hiljade epizoda protiv stohastickog protivnika.  U **stohastickom
+modu** (podrazumevano) hero karte i flop se nasumicno dele svake ruke,
+tako da agent uci prosecnu strategiju za sve moguce ruke umesto da
+memorize jedan scenario.  Mod sa fiksiranom rukom
+(8&#9829; 9&#9829; na J&#9829; Q&#9829; 2&#9827;) je takodje dostupan
+preko `STOCHASTIC` flega u `config.py`.
+
+Agent koristi **Monte Carlo backward pass** da dodeli svakoj akciji u
+epizodi diskontovani povrat, omogucavajuci brzu konvergenciju Q-vrednosti
+ranih ulica.  Potom igra autonomno u GUI okruzenju sa dva prozora
+(CustomTkinter).
 
 ---
 
@@ -529,7 +567,12 @@ Svako stanje je kodirano kao kompaktan string kljuc:
 
 Primer kljuca stanja: `"turn_200_100"` -- Turn karta je na stolu, pot
 sadrzi $200, a Hero ima $100.  Ova apstrakcija drzi Q-tabelu malom
-(~20-30 jedinstvenih stanja) uz ocuvanje sustinskih varijabli odlucivanja.
+(~20-40 jedinstvenih stanja) uz ocuvanje sustinskih varijabli odlucivanja.
+
+> **Napomena:** Kljuc stanja namerno iskljucuje informacije o kartama.
+> U stohastickom modu agent uci jednu strategiju usrednjenu na sve
+> moguce ruke.  Za svest o jacini ruke, bucket jacine (npr.
+> slaba/srednja/jaka) moze se dodati kljucu.
 
 ### Prostor Akcija
 
@@ -573,34 +616,33 @@ nikada ne izvrsava vise od jedne akcije igraca.
 
 ### Pravila Zavrsetka Ulice
 
-Logika zavrsetka se razlikuje po ulici kako bi se garantovao ispravan tok igre:
+Logika zavrsetka je **uniformna na svim ulicama** (Flop, Turn i River):
+ulica se zavrsava kada su **oba** igraca odigrala **i** njihovi ulozi po
+ulici su jednaki (ili je igrac all-in).
 
 ```
- FLOP / TURN                          RIVER
- ──────────                          ─────
- Protivnik otvara (check/raise)      Protivnik otvara (check/raise)
-       │                                   │
- Hero igra (bilo koja ne-fold akcija) Hero igra
-       │                                   │
- ULICA ZAVRSENA ODMAH                Ulozi izjednaceni?
-       │                              │          │
- Dugme "Deal Next Card" se pojavi   Da           Ne
-       │                              │          │
- Diler deli Turn / River            SHOWDOWN   Protivnik odgovara
-                                                  │
-                                              Ulozi izjednaceni?
-                                               │        │
-                                             Da         ...
-                                               │
-                                            SHOWDOWN
+ SVE ULICE (FLOP / TURN / RIVER)
+ ───────────────────────────────
+ Igrac A otvara (check/raise)
+       │
+ Igrac B odgovara (call/raise/fold)
+       │
+ Ulozi izjednaceni?  ──Ne──>  Nastavi kladjenje
+       │
+      Da
+       │
+  ┌────┴────┐
+  │ Flop ili│          River
+  │  Turn   │            │
+  │         │        SHOWDOWN
+  Dugme "Deal Next Card"
+  se pojavljuje
 ```
 
-**Flop i Turn:** Hero-ova ne-fold akcija uvek zavrsava ulicu odmah.
-Diler mora da podeli sledecu community kartu pre bilo kakve dalje akcije.
-
-**River:** Primenjuje se standardno poker pravilo -- oba igraca moraju da
-odigraju i ulozi moraju biti jednaki (ili igrac mora biti all-in) pre
-prelaska na showdown.
+**Alternacija otvaraca ulice:** engine prati ko je poslednji odigrao
+(`last_actor`).  Nakon zavrsetka ulice, `advance_street()` postavlja
+otvaraca na **suprotnog** igraca, sprecavajuci da isti igrac igra
+poslednji na jednoj ulici i prvi na sledecoj.
 
 ### Stanje Zavrsetka
 
@@ -670,13 +712,15 @@ Q(s, a) <-- Q(s, a) + alpha * [ r + gamma * max Q(s', a') - Q(s, a) ]
 | gamma | Faktor diskontovanja | 0.95 | Tezina buducih nagrada |
 | epsilon | Stopa eksploracije | 0.20 | Verovatnoca nasumicne akcije |
 
-### Petlja Treniranja (Jedna Epizoda)
+### Petlja Treniranja (Jedna Epizoda) -- Monte Carlo Backward Pass
 
 ```
  reset() --> stanje s0
      │
      ▼
  ┌──────────────────────────────────┐
+ │  Faza 1: ODIGRAJ epizodu         │
+ │  ─────────────────────────────── │
  │  Dok nije kraj:                  │
  │                                  │
  │  ako current_player == protivnik:│
@@ -687,38 +731,56 @@ Q(s, a) <-- Q(s, a) + alpha * [ r + gamma * max Q(s', a') - Q(s, a) ]
  │      step(a) --> s', r, kraj     │
  │                                  │
  │      ako street_settled:         │
- │          advance_street()        │◄── Napreduj PRE Q-azuriranja
- │          s' = stanje nove ulice  │    da Q(flop) vidi Q(turn)
+ │          advance_street()        │
+ │          s' = stanje nove ulice  │
  │                                  │
- │      Q(s,a) += alpha * [         │
- │        r + gamma*max(Q(s'))      │
- │        - Q(s,a)                  │
- │      ]                           │
+ │      trajectory.append(s, a, s') │◄── Sakupljaj, ne azuriraj
  │      s = s'                      │
+ └──────────────────────────────────┘
+     │
+     ▼  terminalna nagrada R poznata
+ ┌──────────────────────────────────┐
+ │  Faza 2: BACKWARD PASS           │
+ │  ─────────────────────────────── │
+ │  G = R  (ukupna nagrada epizode) │
+ │                                  │
+ │  za (s, a, s') u OBRNUTOM redu:  │
+ │      Q(s,a) += alpha*(G - Q(s,a))│
+ │      G = gamma * G               │◄── Diskontuj za ranije korake
  └──────────────────────────────────┘
 ```
 
-Kritican detalj: kada Hero odigra na flopu ili turn-u i ulica se zavrsi,
-petlja treniranja poziva `advance_street()` **pre** Q-azuriranja.  Ovo
-osigurava da se `Q(flop_stanje, akcija)` azurira koristeci Q-vrednosti
-stanja **sledece ulice** (koje nosi stvarne naucene vrednosti), umesto
-mrtvog zavrsenog stanja gde je `max Q(s') = 0`.
+Umesto azuriranja Q-vrednosti inline (one-step Q-learning), petlja
+treniranja sakuplja celu trajektoriju, a zatim je prolazi **unazad**.
+Terminalna nagrada se primenjuje na poslednju akciju u punom iznosu, a
+svaka ranija akcija dobija diskontovanu verziju:
 
-Bez ovoga, sve Q-vrednosti flopa i turn-a konvergiraju ka nuli i agent
-uci samo na river-u -- gubeci kriticnu stratesku dubinu.
+| Korak | Primljeni povrat |
+|-------|------------------|
+| River akcija | $G = R$ |
+| Turn akcija | $G = \gamma \cdot R$ |
+| Flop akcija | $G = \gamma^2 \cdot R$ |
+
+Ovo omogucava **svakom stanju da nauci iz ishoda u jednoj epizodi**, umesto
+cekanja stotina epizoda da Bellman lanac propagira unazad.
 
 ### Uvid u Konvergenciju
 
-Hero drzi 8&#9829; 9&#9829; na J&#9829; Q&#9829; 2&#9827; flopu:
+U **stohastickom modu** agent vidi svaku mogucu ruku.  Posto kljuc stanja
+ne sadrzi informacije o kartama, Q-vrednosti predstavljaju prosecnu
+profitabilnost svake akcije na svim rukama.  Agent konvergira ka opreznoj
+baznoj strategiji (favorizuje call-ove) jer je raise profitabilan sa
+jakim rukama ali skup sa slabim -- prosek favorizuje flat calling.
+
+U **fiksiranom modu** (8&#9829; 9&#9829; na J&#9829; Q&#9829; 2&#9827;):
 
 - **Flush draw:** 9 preostalih herc karata (9 autova)
 - **Straight draw:** Potreban T ili K (8 autova, minus preklapanja)
 - **Kombinovani jedinstveni autovi:** ~15
 - **Equity do poboljsanja do river-a:** ~54%
 
-Agent bi trebalo da konvergira ka favorizovanju **call**-a i umerenih
-**raise**-ova na ranim ulicama, gradeci pot equity sa draw-om, i igrajuci
-agresivno na river-u kada se ruka kompletira.
+Agent konvergira ka favorizovanju **call**-a i umerenih **raise**-ova
+na ranim ulicama, gradeci pot equity sa draw-om.
 
 ---
 
@@ -769,7 +831,9 @@ Interfejs sa dva prozora (CustomTkinter) i tamnom temom:
 
 **Poker Sto** (primarni prozor):
 - Widget-i karata sa simbolima u boji masova
-- AI Thought Process panel u realnom vremenu (bar chart Q-vrednosti)
+- AI Thought Process panel u realnom vremenu (bar chart Q-vrednosti) --
+  nevazece akcije su prikazane kao `n/a`, a ★ marker najboljeg poteza
+  razmatra samo akcije dostupne u trenutnom stanju
 - Dnevnik akcija koji prati svaki potez
 - Tri moda: Rucna Igra, Gledaj AI, Sledeca Ruka
 
