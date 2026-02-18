@@ -164,9 +164,7 @@ class QLearningAgent:
             max_next_q = max(self.q_table[next_key][a] for a in valid_next_actions)
 
         td_target = reward + self.discount_factor * max_next_q
-        self.q_table[key][action] = current_q + self.learning_rate * (
-            td_target - current_q
-        )
+        self.q_table[key][action] = current_q + self.learning_rate * (td_target - current_q)
 
     # -- Episode runners -----------------------------------------------------
 
@@ -214,6 +212,7 @@ class QLearningAgent:
                     print(f"  [{state.street}] action={action}")
 
                 next_state, reward, done, info = env.step(action)
+                self.update(state, action, reward, next_state, True,[])
             
 
                 # When bets match on flop/turn the street settles.
@@ -223,24 +222,9 @@ class QLearningAgent:
                     env.advance_street()
                     next_state = env._get_state()
 
-                #trajectory.append((state, action, next_state))
                 state = next_state
                 total_reward += reward
 
-        # # -- Backward pass: propagate terminal reward through trajectory --
-        # # Walk the trajectory in reverse.  The last transition gets
-        # # the actual terminal reward; earlier ones get discounted
-        # # returns:  G_t = γ * G_{t+1}  (intermediate rewards are 0).
-        # g = total_reward
-        # for state_t, action_t, next_state_t in reversed(trajectory):
-        #     print(g)
-        #     self.update(
-        #         state_t, action_t, reward, next_state_t, True,
-        #         [],                 # done=True forces max_next_q=0
-        #     )
-        #     #g = self.discount_factor * g
-        
-        self.update(state, action, reward, next_state, True,[])
         won = info.get("winner") == "hero"
         self.episode_rewards.append(total_reward)
         self.episode_wins.append(1 if won else 0)
