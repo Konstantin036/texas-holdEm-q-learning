@@ -151,8 +151,8 @@ class HandEvaluator:
 
     @staticmethod
     def evaluate_hand(cards: Sequence[Card]) -> HandRank:
-        if len(cards) < 5:
-            raise ValueError(f"Need >= 5 cards, got {len(cards)}")
+        if len(cards) < 5: # ovde bi trebalo umesto 5 da bude 9 ?
+            raise ValueError(f"Need >= 5 cards, got {len(cards)}") 
         best: Optional[HandRank] = None
         for combo in itertools.combinations(cards, 5):
             hr = HandEvaluator._evaluate_five(list(combo))
@@ -365,10 +365,14 @@ class PokerEnv:
         self.stochastic = stochastic
 
         # Default (fixed) scenario -- overwritten each reset when stochastic
-        self.hero_cards: List[Card] = [Card("8", "h"), Card("9", "h")]
-        self.flop: List[Card] = [
-            Card("J", "h"), Card("Q", "h"), Card("2", "c"),
-        ]
+        if not stochastic:
+            self.hero_cards: List[Card] = [Card("8", "h"), Card("9", "h")]
+            self.flop: List[Card] = [
+                Card("J", "h"), Card("Q", "h"), Card("2", "c"),
+            ]
+        else:
+            self.hero_cards: List[Card] = []
+            self.flop: List[Card] = []
 
         self.deck: List[Card] = []
         self.turn: Optional[Card] = None

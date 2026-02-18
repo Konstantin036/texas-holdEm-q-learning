@@ -204,7 +204,7 @@ class QLearningAgent:
             if env.current_player == "opponent":
                 result: StepResult = env.step_opponent()
                 _, reward, done, info = result
-                total_reward += reward
+                #total_reward += reward
                 state = result.next_state
             else:
                 valid = env.get_valid_actions()
@@ -233,6 +233,7 @@ class QLearningAgent:
         # returns:  G_t = γ * G_{t+1}  (intermediate rewards are 0).
         g = total_reward
         for state_t, action_t, next_state_t in reversed(trajectory):
+            print(g)
             self.update(
                 state_t, action_t, g, next_state_t, True,
                 [],                 # done=True forces max_next_q=0
