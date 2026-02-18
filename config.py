@@ -63,7 +63,7 @@ INITIAL_POT: Final[int] = 100
 OPPONENT_AGGRESSION: Final[float] = 0.3
 OPPONENT_FOLD_PROB: Final[float] = 0.10
 
-ACTIONS: Final[List[str]] = ["fold", "call", "raise_50", "raise_100", "raise_150"]
+ACTIONS: Final[List[str]] = ["fold", "call", "raise_50", "raise_100", "all_in"]
 
 
 # ============================================================================
@@ -138,7 +138,7 @@ ACTION_DISPLAY: Final[Dict[str, tuple]] = {
     "call":      ("Call",       "#66bb6a"),
     "raise_50":  ("Raise $50",  "#29b6f6"),
     "raise_100": ("Raise $100", "#ffa726"),
-    "raise_150": ("All-In",     "#ab47bc"),
+    "all_in":    ("All-In",     "#ab47bc"),
 }
 
 # -- Window defaults --

@@ -480,7 +480,7 @@ class PokerEnv:
         if self.hero_stack >= 100:
             valid.append("raise_100")
         if self.hero_stack > 0:
-            valid.append("raise_150")
+            valid.append("all_in")
         return valid
 
     def _opp_valid(self) -> List[str]:
@@ -645,7 +645,7 @@ class PokerEnv:
             hero_bet = self._hero_puts(to_call + 100)
             reward = -hero_bet - 100
 
-        elif action == "raise_150":
+        elif action == "all_in":
             hero_bet = self._hero_puts(self.hero_stack)
             reward = -hero_bet
 
