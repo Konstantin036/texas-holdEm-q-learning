@@ -607,7 +607,15 @@ class PokerEnv:
         deal).  On the river it proceeds directly to showdown.
         """
         if self.done:
-            return StepResult(self._get_state(), 0.0, True, {"who": "hero"})
+            if self.winner == "hero":
+                reward = float((self.hero_stack + self.pot) - INITIAL_STACK)
+                return StepResult(self._get_state(), reward, True, {"who": "hero"})
+            elif self.winner == "opponent":
+                reward = float(self.hero_stack - INITIAL_STACK)
+                return StepResult(self._get_state(), reward, True, {"who": "opponent"})
+            else:
+                reward = float(self.pot/2)
+                return StepResult(self._get_state(), reward, True, {"who": "tie"})
 
         # -- fold --
         if action == "fold":

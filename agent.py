@@ -189,9 +189,6 @@ class QLearningAgent:
         done: bool = False
         info: Dict[str, Any] = {}
 
-        # Collect trajectory: list of (state, action, next_state)
-        trajectory: List[Tuple[GameState, str, GameState]] = []
-
         while not done:
             # If the street just settled, advance to deal the next card
             if env.street_settled:
@@ -202,7 +199,6 @@ class QLearningAgent:
             if env.current_player == "opponent":
                 result: StepResult = env.step_opponent()
                 _, reward, done, info = result
-                #total_reward += reward
                 state = result.next_state
             else:
                 valid = env.get_valid_actions()
