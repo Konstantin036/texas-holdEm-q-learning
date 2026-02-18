@@ -213,8 +213,8 @@ class QLearningAgent:
                 if verbose:
                     print(f"  [{state.street}] action={action}")
 
-                result = env.step(action)
-                next_state, reward, done, info = result
+                next_state, reward, done, info = env.step(action)
+            
 
                 # When bets match on flop/turn the street settles.
                 # Advance immediately so the next_state points to the
@@ -223,23 +223,24 @@ class QLearningAgent:
                     env.advance_street()
                     next_state = env._get_state()
 
-                trajectory.append((state, action, next_state))
+                #trajectory.append((state, action, next_state))
                 state = next_state
                 total_reward += reward
 
-        # -- Backward pass: propagate terminal reward through trajectory --
-        # Walk the trajectory in reverse.  The last transition gets
-        # the actual terminal reward; earlier ones get discounted
-        # returns:  G_t = γ * G_{t+1}  (intermediate rewards are 0).
-        g = total_reward
-        for state_t, action_t, next_state_t in reversed(trajectory):
-            print(g)
-            self.update(
-                state_t, action_t, g, next_state_t, True,
-                [],                 # done=True forces max_next_q=0
-            )
-            g = self.discount_factor * g
-
+        # # -- Backward pass: propagate terminal reward through trajectory --
+        # # Walk the trajectory in reverse.  The last transition gets
+        # # the actual terminal reward; earlier ones get discounted
+        # # returns:  G_t = γ * G_{t+1}  (intermediate rewards are 0).
+        # g = total_reward
+        # for state_t, action_t, next_state_t in reversed(trajectory):
+        #     print(g)
+        #     self.update(
+        #         state_t, action_t, reward, next_state_t, True,
+        #         [],                 # done=True forces max_next_q=0
+        #     )
+        #     #g = self.discount_factor * g
+        
+        self.update(state, action, reward, next_state, True,[])
         won = info.get("winner") == "hero"
         self.episode_rewards.append(total_reward)
         self.episode_wins.append(1 if won else 0)

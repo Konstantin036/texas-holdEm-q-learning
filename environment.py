@@ -624,17 +624,22 @@ class PokerEnv:
         if action == "call":
             to_call = max(0, self.opp_street_bet - self.hero_street_bet)
             hero_bet = self._hero_puts(to_call)
+            reward = -hero_bet
+
 
         elif action == "raise_50":
             to_call = max(0, self.opp_street_bet - self.hero_street_bet)
             hero_bet = self._hero_puts(to_call + 50)
+            reward = -hero_bet - 50
 
         elif action == "raise_100":
             to_call = max(0, self.opp_street_bet - self.hero_street_bet)
             hero_bet = self._hero_puts(to_call + 100)
+            reward = -hero_bet - 100
 
         elif action == "raise_150":
             hero_bet = self._hero_puts(self.hero_stack)
+            reward = -hero_bet
 
         self.hero_acted = True
         self.last_actor = "hero"
@@ -670,7 +675,7 @@ class PokerEnv:
 
         # Not settled -> opponent must respond
         self.current_player = "opponent"
-        return StepResult(self._get_state(), 0.0, False, info)
+        return StepResult(self._get_state(), reward, False, info)
 
     # -- helpers -------------------------------------------------------------
 
