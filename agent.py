@@ -168,65 +168,43 @@ class QLearningAgent:
 
     # -- Episode runners -----------------------------------------------------
 
-    def train_episode(
-        self,
-        env: PokerEnv,
-        verbose: bool = False,
-    ) -> Tuple[float, bool]:
-        """Run one training episode and return ``(total_reward, won)``.
-
-        Uses **Monte-Carlo-style backward updates**: the episode is
-        played out first, collecting a trajectory of ``(state, action,
-        next_state)`` tuples.  After the terminal reward is known,
-        every hero action is credited using a discounted return
-        that propagates backward from the final reward in a single
-        pass.  This lets early-street Q-values converge in one
-        episode instead of requiring hundreds of episodes for the
-        Bellman chain to propagate.
-        """
-        state: GameState = env.reset()
-        G: float = 0.0
-        final_reward: float = 0.0
-        done: bool = False
-        trajectory = []
-        info: Dict[str, Any] = {}
+    def train_episode(self, env: PokerEnv, verbose: bool = False) -> Tuple[float, bool]:
+        """Run one training episode using backward pass (Return G)."""
+        state = env.reset()
+        done = False
+        trajectory = []  # Collect (state, action) pairs for backward pass
 
         while not done:
-            # If the street just settled, advance to deal the next card
             if env.street_settled:
                 env.advance_street()
                 state = env._get_state()
                 continue
 
             if env.current_player == "opponent":
-                result: StepResult = env.step_opponent()
-                _, reward, done, info = result
-                state = result.next_state
+                result = env.step_opponent()
+                done, info, state = result.done, result.info, result.next_state
+                final_reward = result.reward  # Terminal profit/loss
             else:
                 valid = env.get_valid_actions()
                 action = self.get_action(state, valid, training=True)
-
-                if verbose:
-                    print(f"  [{state.street}] action={action}")
-
+                
                 next_state, reward, done, info = env.step(action)
 
                 trajectory.append((state, action))
-                final_reward = reward
                 
-                # When bets match on flop/turn the street settles.
-                # Advance immediately so the next_state points to the
-                # new street (which has meaningful Q-values).
                 if not done and env.street_settled:
                     env.advance_street()
                     next_state = env._get_state()
                 
                 state = next_state
+                final_reward = reward  # Profit/loss at episode end
 
-            G = final_reward
-            for s_t, a_t in reversed(trajectory):
-                self.update(s_t, a_t, G, s_t, True, [])
-                G *= self.discount_factor
+        # Phase 2: Backward pass -- credit each action with discounted return
+        g = final_reward
+        for s_t, a_t in reversed(trajectory):
+            self.update(s_t, a_t, g, s_t, True, [])
+            # Discount for earlier time-steps
+            g *= self.discount_factor
 
         won = info.get("winner") == "hero"
         self.episode_rewards.append(final_reward)

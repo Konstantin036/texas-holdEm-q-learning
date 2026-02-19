@@ -151,7 +151,7 @@ class HandEvaluator:
 
     @staticmethod
     def evaluate_hand(cards: Sequence[Card]) -> HandRank:
-        if len(cards) < 5: # ovde bi trebalo umesto 5 da bude 9 ?
+        if len(cards) < 5:
             raise ValueError(f"Need >= 5 cards, got {len(cards)}") 
         best: Optional[HandRank] = None
         for combo in itertools.combinations(cards, 5):
@@ -600,77 +600,52 @@ class PokerEnv:
     # ================================================================
 
     def step(self, action: str) -> StepResult:
-        """Hero acts once.  Returns immediately.
-
-        A street settles when both players have acted and bets match.
-        On flop/turn this sets ``street_settled = True`` (caller must
-        deal).  On the river it proceeds directly to showdown.
-        """
+        """Hero acts once. Returns immediately."""
         if self.done:
             return StepResult(self._get_state(), 0.0, True, {})
 
-        # -- fold --aj
+        # -- fold -- (terminal state)
         if action == "fold":
             self.done = True
             self.winner = "opponent"
-            reward = float(self.hero_stack - INITIAL_STACK)
-            self.current_player = "opponent"
-            return StepResult(self._get_state(), reward, True,
-                              {"who": "hero", "action": "fold", "bet": 0,
-                               "winner": "opponent"})
+            reward = float(self.hero_stack - INITIAL_STACK)  # Loss of invested chips
+            return StepResult(self._get_state(), reward, True, 
+                              {"who": "hero", "action": "fold", "winner": "opponent"})
 
+        # -- bets -- (intermediate steps, reward is 0.0)
         hero_bet: int = 0
-
         if action == "call":
             to_call = max(0, self.opp_street_bet - self.hero_street_bet)
             hero_bet = self._hero_puts(to_call)
-
         elif action == "raise_50":
             to_call = max(0, self.opp_street_bet - self.hero_street_bet)
             hero_bet = self._hero_puts(to_call + 50)
-
         elif action == "raise_100":
             to_call = max(0, self.opp_street_bet - self.hero_street_bet)
             hero_bet = self._hero_puts(to_call + 100)
-            
         elif action == "all_in":
             hero_bet = self._hero_puts(self.hero_stack)
 
         self.hero_acted = True
         self.last_actor = "hero"
+        info = {"who": "hero", "action": action, "bet": hero_bet}
 
-        info: Dict[str, Any] = {
-            "who": "hero", "action": action, "bet": hero_bet,
-        }
-
-        # ----------------------------------------------------------
-        # Uniform bets-matched rule (all streets):
-        # Street settles when BOTH players have acted AND bets are
-        # equal (or a player is all-in).
-        # ----------------------------------------------------------
+        # Check whether the street settles
         bets_matched = (
-            self.hero_acted
-            and self.opp_acted
-            and (
-                self.hero_street_bet == self.opp_street_bet
-                or (self.hero_stack == 0
-                    and self.hero_street_bet <= self.opp_street_bet)
-                or (self.hero_stack == 0 and self.opponent_stack == 0)
-            )
+            self.hero_acted and self.opp_acted and 
+            (self.hero_street_bet == self.opp_street_bet or self.hero_stack == 0)
         )
 
         if bets_matched:
             if self.street == "river":
                 return self._showdown(info_extra=info)
-            # Flop / Turn settled -- wait for advance_street()
             self.street_settled = True
-            self.current_player = "opponent"
             info["street_settled"] = True
             return StepResult(self._get_state(), 0.0, False, info)
 
-        # Not settled -> opponent must respond
         self.current_player = "opponent"
         return StepResult(self._get_state(), 0.0, False, info)
+
 
     # -- helpers -------------------------------------------------------------
 
