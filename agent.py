@@ -185,7 +185,7 @@ class QLearningAgent:
         Bellman chain to propagate.
         """
         state: GameState = env.reset()
-        total_reward: float = 0.0
+        G: float = 0.0
         done: bool = False
         info: Dict[str, Any] = {}
 
@@ -208,8 +208,8 @@ class QLearningAgent:
                     print(f"  [{state.street}] action={action}")
 
                 next_state, reward, done, info = env.step(action)
-                self.update(state, action, reward, next_state, True,[])
-            
+                G += reward
+                self.update(state, action, reward, next_state, done, valid)
 
                 # When bets match on flop/turn the street settles.
                 # Advance immediately so the next_state points to the
@@ -217,14 +217,15 @@ class QLearningAgent:
                 if not done and env.street_settled:
                     env.advance_street()
                     next_state = env._get_state()
-
+                print(reward)
+                print(done)
+                
                 state = next_state
-                total_reward += reward
 
         won = info.get("winner") == "hero"
-        self.episode_rewards.append(total_reward)
+        self.episode_rewards.append(G)
         self.episode_wins.append(1 if won else 0)
-        return total_reward, won
+        return G, won
 
     def train(
         self,

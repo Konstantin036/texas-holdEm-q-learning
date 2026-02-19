@@ -606,17 +606,6 @@ class PokerEnv:
         On flop/turn this sets ``street_settled = True`` (caller must
         deal).  On the river it proceeds directly to showdown.
         """
-        if self.done:
-            if self.winner == "hero":
-                reward = float((self.hero_stack + self.pot) - INITIAL_STACK)
-                return StepResult(self._get_state(), reward, True, {"who": "hero"})
-            elif self.winner == "opponent":
-                reward = float(self.hero_stack - INITIAL_STACK)
-                return StepResult(self._get_state(), reward, True, {"who": "opponent"})
-            else:
-                reward = float(self.pot/2)
-                return StepResult(self._get_state(), reward, True, {"who": "tie"})
-
         # -- fold --
         if action == "fold":
             self.done = True
@@ -733,14 +722,18 @@ class PokerEnv:
 
         if cmp > 0:
             self.winner = "hero"
+            print("gotovo_zavrsio_sam_pobednik_agent")
             reward = float((self.hero_stack + self.pot) - INITIAL_STACK)
         elif cmp < 0:
             self.winner = "opponent"
+            print("gotovo_zavrsio_sam_pobednik_protivnik")
             reward = float(self.hero_stack - INITIAL_STACK)
         else:
             self.winner = "tie"
-            hero_share = (self.pot + 1) // 2
-            reward = float((self.hero_stack + hero_share) - INITIAL_STACK)
+            print("gotovo_zavrsio_sam_izjednaceno")
+            #hero_share = self.pot / 2.0
+            #reward = float((self.hero_stack + hero_share) - INITIAL_STACK)
+            reward = float(self.pot / 2.0)
 
         hero_hr = HandEvaluator.evaluate_hand(hero_pool)
         opp_hr = HandEvaluator.evaluate_hand(opp_pool)
