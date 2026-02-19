@@ -74,11 +74,11 @@ graph TD
 
 | File | Role | Lines | Responsibility |
 |------|------|------:|----------------|
-| `config.py` | Constants | ~155 | Every magic number, colour token, and hyperparameter default |
-| `environment.py` | Model | ~720 | Card representation, hand evaluator (BGC-compliant), opponent policy, MDP engine |
-| `agent.py` | Controller | ~335 | Q-table, epsilon-greedy action selection, Bellman update, training loop |
-| `ui.py` | View | ~1470 | Poker Table window, Train & Analyse window, timer management |
-| `main.py` | Entry | ~25 | Instantiates `PokerGUI` and calls `run()` |
+| `config.py` | Constants | ~156 | Every magic number, colour token, and hyperparameter default |
+| `environment.py` | Model | ~719 | Card representation, hand evaluator (BGC-compliant), opponent policy, MDP engine |
+| `agent.py` | Controller | ~316 | Q-table, epsilon-greedy action selection, Bellman update, training loop |
+| `ui.py` | View | ~1500 | Poker Table window, Train & Analyse window, timer management |
+| `main.py` | Entry | ~24 | Instantiates `PokerGUI` and calls `run()` |
 
 ---
 
@@ -145,10 +145,10 @@ Five atomic actions are available to the agent on each decision point:
 | Check / Call | `call` | Match the opponent's current bet (or check if $0) |
 | Raise $50 | `raise_50` | Call + add $50 on top |
 | Raise $100 | `raise_100` | Call + add $100 on top |
-| All-In | `raise_150` | Push entire remaining stack |
+| All-In | `all_in` | Push entire remaining stack |
 
 Action availability is dynamic -- `raise_100` is only valid when Hero has at
-least $100 remaining.  The `raise_150` label always means "push whatever is
+least $100 remaining.  The `all_in` action always means "push whatever is
 left", even if that is less than $150.
 
 ### Reward Signal
@@ -413,8 +413,8 @@ prevent ghost callbacks and race conditions between UI events.
 **1. Clone and enter the project:**
 
 ```bash
-git clone <repository-url>
-cd TexasHoldEm
+git clone https://github.com/Konstantin036/texas-holdEm-q-learning.git
+cd texas-holdEm-q-learning
 ```
 
 **2. Install dependencies:**
@@ -443,7 +443,9 @@ TexasHold'em/
 ├── config.py          # All constants and theme tokens
 ├── environment.py     # Poker MDP engine + hand evaluator
 ├── agent.py           # Q-Learning agent
-└── ui.py              # Two-window CustomTkinter GUI
+├── ui.py              # Two-window CustomTkinter GUI
+├── requirements.txt   # Python dependencies
+└── README.md          # This file
 ```
 
 ---
@@ -513,11 +515,11 @@ graph TD
 
 | Fajl | Uloga | Linije | Odgovornost |
 |------|-------|-------:|-------------|
-| `config.py` | Konstante | ~155 | Svi magicni brojevi, boje i podrazumevani hiperparametri |
-| `environment.py` | Model | ~720 | Reprezentacija karata, evaluator ruku (BGC), politika protivnika, MDP engine |
-| `agent.py` | Controller | ~335 | Q-tabela, epsilon-greedy selekcija, Bellman azuriranje, petlja treniranja |
-| `ui.py` | View | ~1470 | Poker sto, Treniraj & Analiziraj prozor, upravljanje tajmerima |
-| `main.py` | Ulaz | ~25 | Instancira `PokerGUI` i poziva `run()` |
+| `config.py` | Konstante | ~156 | Svi magicni brojevi, boje i podrazumevani hiperparametri |
+| `environment.py` | Model | ~719 | Reprezentacija karata, evaluator ruku (BGC), politika protivnika, MDP engine |
+| `agent.py` | Controller | ~316 | Q-tabela, epsilon-greedy selekcija, Bellman azuriranje, petlja treniranja |
+| `ui.py` | View | ~1500 | Poker sto, Treniraj & Analiziraj prozor, upravljanje tajmerima |
+| `main.py` | Ulaz | ~24 | Instancira `PokerGUI` i poziva `run()` |
 
 ---
 
@@ -584,10 +586,10 @@ Pet atomicnih akcija je dostupno agentu na svakoj tacki odlucivanja:
 | Check / Call | `call` | Izjednacavanje sa ulogom protivnika (ili check ako je $0) |
 | Raise $50 | `raise_50` | Call + dodatnih $50 |
 | Raise $100 | `raise_100` | Call + dodatnih $100 |
-| All-In | `raise_150` | Gurni ceo preostali stack |
+| All-In | `all_in` | Gurni ceo preostali stack |
 
 Dostupnost akcija je dinamicka -- `raise_100` je validan samo kada Hero ima
-bar $100 preostalo.  Oznaka `raise_150` uvek znaci "gurni sve sto je ostalo",
+bar $100 preostalo.  Akcija `all_in` uvek znaci "gurni sve sto je ostalo",
 cak i ako je to manje od $150.
 
 ### Signal Nagrade
@@ -852,8 +854,8 @@ za sprecavanje ghost callback-ova i race condition-a izmedju UI dogadjaja.
 **1. Klonirajte i udjite u projekat:**
 
 ```bash
-git clone <repository-url>
-cd TexasHoldEm
+git clone https://github.com/Konstantin036/texas-holdEm-q-learning.git
+cd texas-holdEm-q-learning
 ```
 
 **2. Instalirajte zavisnosti:**
@@ -882,7 +884,9 @@ TexasHold'em/
 ├── config.py          # Sve konstante i tokeni tema
 ├── environment.py     # Poker MDP engine + evaluator ruku
 ├── agent.py           # Q-Learning agent
-└── ui.py              # GUI sa dva prozora (CustomTkinter)
+├── ui.py              # GUI sa dva prozora (CustomTkinter)
+├── requirements.txt   # Python zavisnosti
+└── README.md          # Ovaj fajl
 ```
 
 ---
