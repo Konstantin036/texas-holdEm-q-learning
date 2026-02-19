@@ -186,7 +186,9 @@ class QLearningAgent:
         """
         state: GameState = env.reset()
         G: float = 0.0
+        final_reward: float = 0.0
         done: bool = False
+        trajectory = []
         info: Dict[str, Any] = {}
 
         while not done:
@@ -208,24 +210,28 @@ class QLearningAgent:
                     print(f"  [{state.street}] action={action}")
 
                 next_state, reward, done, info = env.step(action)
-                G += reward
-                self.update(state, action, reward, next_state, done, valid)
 
+                trajectory.append((state, action))
+                final_reward = reward
+                
                 # When bets match on flop/turn the street settles.
                 # Advance immediately so the next_state points to the
                 # new street (which has meaningful Q-values).
                 if not done and env.street_settled:
                     env.advance_street()
                     next_state = env._get_state()
-                print(reward)
-                print(done)
                 
                 state = next_state
 
+            G = final_reward
+            for s_t, a_t in reversed(trajectory):
+                self.update(s_t, a_t, G, s_t, True, [])
+                G *= self.discount_factor
+
         won = info.get("winner") == "hero"
-        self.episode_rewards.append(G)
+        self.episode_rewards.append(final_reward)
         self.episode_wins.append(1 if won else 0)
-        return G, won
+        return final_reward, won
 
     def train(
         self,

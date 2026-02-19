@@ -606,7 +606,10 @@ class PokerEnv:
         On flop/turn this sets ``street_settled = True`` (caller must
         deal).  On the river it proceeds directly to showdown.
         """
-        # -- fold --
+        if self.done:
+            return StepResult(self._get_state(), 0.0, True, {})
+
+        # -- fold --aj
         if action == "fold":
             self.done = True
             self.winner = "opponent"
@@ -621,22 +624,17 @@ class PokerEnv:
         if action == "call":
             to_call = max(0, self.opp_street_bet - self.hero_street_bet)
             hero_bet = self._hero_puts(to_call)
-            reward = -hero_bet
-
 
         elif action == "raise_50":
             to_call = max(0, self.opp_street_bet - self.hero_street_bet)
             hero_bet = self._hero_puts(to_call + 50)
-            reward = -hero_bet - 50
 
         elif action == "raise_100":
             to_call = max(0, self.opp_street_bet - self.hero_street_bet)
             hero_bet = self._hero_puts(to_call + 100)
-            reward = -hero_bet - 100
-
+            
         elif action == "all_in":
             hero_bet = self._hero_puts(self.hero_stack)
-            reward = -hero_bet
 
         self.hero_acted = True
         self.last_actor = "hero"
@@ -672,7 +670,7 @@ class PokerEnv:
 
         # Not settled -> opponent must respond
         self.current_player = "opponent"
-        return StepResult(self._get_state(), reward, False, info)
+        return StepResult(self._get_state(), 0.0, False, info)
 
     # -- helpers -------------------------------------------------------------
 
@@ -722,18 +720,14 @@ class PokerEnv:
 
         if cmp > 0:
             self.winner = "hero"
-            print("gotovo_zavrsio_sam_pobednik_agent")
             reward = float((self.hero_stack + self.pot) - INITIAL_STACK)
         elif cmp < 0:
             self.winner = "opponent"
-            print("gotovo_zavrsio_sam_pobednik_protivnik")
             reward = float(self.hero_stack - INITIAL_STACK)
         else:
             self.winner = "tie"
-            print("gotovo_zavrsio_sam_izjednaceno")
-            #hero_share = self.pot / 2.0
-            #reward = float((self.hero_stack + hero_share) - INITIAL_STACK)
-            reward = float(self.pot / 2.0)
+            hero_share = self.pot / 2.0
+            reward = float((self.hero_stack + hero_share) - INITIAL_STACK)
 
         hero_hr = HandEvaluator.evaluate_hand(hero_pool)
         opp_hr = HandEvaluator.evaluate_hand(opp_pool)
